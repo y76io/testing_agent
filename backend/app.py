@@ -1,6 +1,7 @@
 import os, json, datetime
-from fastapi import FastAPI, HTTPException, UploadFile, File, Body
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, UploadFile, File, Body, Request, Form
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 from .db import Base, engine, SessionLocal
 from .models import System, Mapping, Run, Metric, Standard, Artifact, MetricResult, Dataset, DatasetItem, StandardMetric
@@ -17,6 +18,7 @@ from .utils.applicability import dataset_supports_metric, compute_items_stats
 import json
 
 app = FastAPI(title="Testing Agent (No LangFlow)")
+templates = Jinja2Templates(directory="backend/templates")
 
 # Initialize DB
 Base.metadata.create_all(bind=engine)
@@ -46,6 +48,106 @@ _ensure_columns_sqlite()
 
 def now_iso():
     return datetime.datetime.utcnow().isoformat()
+
+@app.get("/")
+def root():
+    return {
+        "ok": True,
+        "service": "Testing Agent",
+        "version": "mvp",
+        "docs": "/docs",
+        "endpoints": [
+            "/sut", "/mapping/detect", "/plan", "/run", "/evaluate",
+            "/runs", "/run/{run_id}/results", "/reports/{run_id}/{rtype}",
+            "/datasets", "/datasets/items", "/standards/metrics", "/metrics/update",
+            "/healthz"
+        ],
+    }
+
+@app.get("/healthz")
+def healthz():
+    return {"status": "ok", "time": now_iso()}
+
+
+# ---- Minimal UI ----
+
+@app.get("/ui", response_class=HTMLResponse)
+def ui_index(request: Request):
+    db = SessionLocal()
+    try:
+        runs = db.query(Run).order_by(Run.id.desc()).limit(50).all()
+        return templates.TemplateResponse("index.html", {"request": request, "runs": runs})
+    finally:
+        db.close()
+
+
+@app.get("/ui/new", response_class=HTMLResponse)
+def ui_new_form(request: Request):
+    return templates.TemplateResponse("new_eval.html", {"request": request})
+
+
+@app.post("/ui/new", response_class=HTMLResponse)
+def ui_new_submit(request: Request,
+                  system_id: str = Form(...),
+                  name: str = Form(""),
+                  endpoint: str = Form(...),
+                  method: str = Form("POST"),
+                  headers_json: str = Form("{}"),
+                  body_json: str = Form("{}"),
+                  test_prompt: str = Form("Hello")):
+    # Parse JSON
+    try:
+        headers = json.loads(headers_json or "{}")
+        body = json.loads(body_json or "{}")
+    except Exception as e:
+        return templates.TemplateResponse("new_eval.html", {"request": request, "error": f"Invalid JSON: {e}"})
+
+    # SUT upsert
+    _sut = SUTIn(system_id=system_id, name=name or system_id, endpoint=endpoint, method=method or "POST", headers=headers, body=body)
+    create_or_update_sut(_sut)
+
+    # Mapping detect (persists mapping)
+    mdet = MappingDetectIn(system_id=system_id, headers=headers, body=body)
+    mapping_result = mapping_detect(mdet)
+
+    # Plan inline run (single test prompt)
+    run_id = f"ui-{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}"
+    plan_payload = PlanIn(
+        run_id=run_id,
+        system_id=system_id,
+        mode="manual",
+        standard_code=None,
+        metric_codes=[],
+        dataset={"type": "inline", "lines": [{"prompt": test_prompt}]}
+    )
+    create_plan(plan_payload)
+
+    # Execute
+    run_execute(RunIn(run_id=run_id))
+
+    # Load artifacts for display
+    from .evaluator import load_artifacts
+    artifacts = load_artifacts(run_id)
+
+    return templates.TemplateResponse("new_eval_result.html", {
+        "request": request,
+        "system_id": system_id,
+        "run_id": run_id,
+        "mapping": mapping_result,
+        "artifacts": artifacts,
+    })
+
+
+@app.get("/ui/run/{run_id}", response_class=HTMLResponse)
+def ui_run_detail(request: Request, run_id: str):
+    db = SessionLocal()
+    try:
+        r = db.query(Run).filter_by(run_id=run_id).first()
+        from .evaluator import load_artifacts
+        artifacts = load_artifacts(run_id)
+        return templates.TemplateResponse("run_detail.html", {"request": request, "run": r, "artifacts": artifacts})
+    finally:
+        db.close()
 
 @app.post("/sut")
 def create_or_update_sut(payload: SUTIn):

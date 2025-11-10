@@ -1,0 +1,18 @@
+{% extends 'layout.html' %}
+{% block content %}
+  <h2>Run: {{ run.run_id }}</h2>
+  <p><strong>System:</strong> {{ run.system_id }} &nbsp; <strong>Status:</strong> {{ run.status }} &nbsp; <strong>Overall:</strong> {{ '%.3f'|format(run.overall_score or 0.0) }}</p>
+  <h3>Artifacts</h3>
+  {% for a in artifacts %}
+    <details style="margin: 1rem 0;">
+      <summary>Item {{ a.idx }} — status {{ a.response.status }} — {{ a.latency_ms }} ms — error {{ a.error_detected }}</summary>
+      <h4>Request</h4>
+      <pre>{{ a.request | tojson(indent=2) }}</pre>
+      <h4>Response</h4>
+      <pre>{{ a.response | tojson(indent=2) }}</pre>
+    </details>
+  {% else %}
+    <p>No artifacts found.</p>
+  {% endfor %}
+{% endblock %}
+

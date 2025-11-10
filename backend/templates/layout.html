@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Testing Agent</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 2rem; }
+    header { margin-bottom: 1.5rem; }
+    .container { max-width: 1000px; margin: 0 auto; }
+    textarea, input, select { width: 100%; padding: 8px; font-family: monospace; }
+    label { font-weight: 600; display: block; margin-top: 1rem; }
+    .btn { display:inline-block; padding: 8px 12px; background:#2d6cdf; color:white; text-decoration:none; border-radius:6px; border:none; cursor:pointer; }
+    .btn.secondary { background:#666; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 8px; border-bottom: 1px solid #eee; text-align: left; }
+    pre { background: #f8f8f8; padding: 8px; border-radius: 6px; overflow: auto; }
+    .error { color: #b00020; font-weight: 600; }
+  </style>
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1><a href="/ui" style="color:inherit; text-decoration:none;">Testing Agent</a></h1>
+      <nav>
+        <a class="btn" href="/ui/new">New Blackbox API Evaluation</a>
+        <a class="btn secondary" href="/docs">API Docs</a>
+      </nav>
+    </header>
+    {% block content %}{% endblock %}
+  </div>
+</body>
+</html>
+

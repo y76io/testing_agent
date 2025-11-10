@@ -94,7 +94,10 @@ def evaluate(run_id: str, metric_defs: List[Dict[str,Any]]):
     # normalize function metrics to 0..1 where needed
     def norm(code, val):
         if code == "latency_check":
-            return 1.0 if val <= metric_defs[[md["code"] for md in metric_defs].index(code)]["threshold"] else 0.0
+            thr = metric_defs[[md["code"] for md in metric_defs].index(code)]["threshold"]
+            if val is None:
+                return 0.0
+            return 1.0 if val <= thr else 0.0
         if code == "reliability_check":
             return float(val)
         return float(val)  # llm means already 0..1

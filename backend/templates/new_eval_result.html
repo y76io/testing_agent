@@ -1,0 +1,26 @@
+{% extends 'layout.html' %}
+{% block content %}
+  <h2>Mapping Detected</h2>
+  <p><strong>System:</strong> {{ system_id }} &nbsp; <strong>Run:</strong> <a href="/ui/run/{{ run_id }}">{{ run_id }}</a></p>
+  <h3>Prompt Paths</h3>
+  <pre>{{ mapping.prompt_paths | tojson(indent=2) }}</pre>
+  <h3>Response Paths</h3>
+  <pre>{{ mapping.response_paths | tojson(indent=2) }}</pre>
+  <h3>Error Rules</h3>
+  <pre>{{ mapping.error_rules | tojson(indent=2) }}</pre>
+
+  <h2>Test Response</h2>
+  {% if artifacts and artifacts|length > 0 %}
+    {% set a = artifacts[0] %}
+    <p><strong>Status:</strong> {{ a.response.status }} &nbsp; <strong>Latency:</strong> {{ a.latency_ms }} ms &nbsp; <strong>Error:</strong> {{ a.error_detected }}</p>
+    <h4>Request</h4>
+    <pre>{{ a.request | tojson(indent=2) }}</pre>
+    <h4>Response</h4>
+    <pre>{{ a.response | tojson(indent=2) }}</pre>
+  {% else %}
+    <p>No artifacts were captured.</p>
+  {% endif %}
+
+  <p><a class="btn" href="/ui">Back to Runs</a></p>
+{% endblock %}
+
