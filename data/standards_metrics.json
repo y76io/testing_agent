@@ -1,0 +1,8 @@
+{
+  "standards_metrics": [
+    {"standard_code": "iso_42001_api_subset", "metric_code": "latency_check", "required": true},
+    {"standard_code": "iso_42001_api_subset", "metric_code": "reliability_check", "required": true},
+    {"standard_code": "iso_42001_api_subset", "metric_code": "llm_quality_check", "required": false},
+    {"standard_code": "iso_42001_api_subset", "metric_code": "toxicity_guard_check", "required": false}
+  ]
+}

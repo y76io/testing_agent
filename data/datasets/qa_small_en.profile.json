@@ -1,0 +1,15 @@
+{
+  "dataset_id": "qa_small_en",
+  "name": "QA Small (EN)",
+  "description": "Tiny QA dataset for testing",
+  "source": "synthetic",
+  "license": "CC0",
+  "profile": {
+    "modalities": ["text"],
+    "languages": ["en"],
+    "domains": ["general"],
+    "tags": ["qa", "demo"],
+    "has_ground_truth": false,
+    "item_schema": {"prompt": "string"}
+  }
+}

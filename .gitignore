@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.python-version
+
+# Env
+.env
+.venv/
+
+# Local DB and storage
+*.db
+storage/
+
+# OS files
+.DS_Store

@@ -1,0 +1,15 @@
+{
+  "standards": [
+    {
+      "code": "iso_42001_api_subset",
+      "name": "ISO/IEC 42001 \u00a78 \u2014 API Automatable Subset (Example)",
+      "description": "Example subset of operational controls suitable for black-box API testing.",
+      "metric_codes": [
+        "latency_check",
+        "reliability_check",
+        "llm_quality_check",
+        "toxicity_guard_check"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,167 @@
+
+Codex Task Brief: Data Model Upgrade + Pre-Flight Review
+Repository name: testing_agent_repo
+
+Objective
+1) Extend the repo to model standards, metrics, applicability rules, datasets, dataset items, and the standard↔metric relation.
+2) Enable metric↔dataset compatibility checks via machine-readable applicability.
+3) Record mapping snapshots per run for lineage.
+4) Keep SQLite now; make schema ready to migrate to PostgreSQL.
+5) Produce a best-practices review of the data model in a file (no extra code beyond this brief).
+
+Constraints and conventions
+- Keep current stack: FastAPI, SQLAlchemy, SQLite.
+- Store JSON as TEXT in SQLite. Code should work unchanged when DATABASE_URL points to PostgreSQL (JSONB via SQLAlchemy).
+- Use SQLAlchemy models and Pydantic schemas.
+- Do not change existing endpoint behaviors except where noted.
+
+1) Model changes (backend/models.py)
+Add columns:
+- Metric: applicability (Text), unit (String), aggregation (String)
+- Standard: version (String, nullable)
+- Run: mapping_snapshot (Text, nullable), selected_metric_codes (Text, nullable)
+
+New tables:
+class StandardMetric(Base):
+    __tablename__ = "standards_metrics"
+    id = Column(Integer, primary_key=True)
+    standard_code = Column(String, ForeignKey("standards.code"))
+    metric_code = Column(String, ForeignKey("metrics.code"))
+    required = Column(Integer, default=0)  # 0/1
+
+class Dataset(Base):
+    __tablename__ = "datasets"
+    id = Column(Integer, primary_key=True)
+    dataset_id = Column(String, unique=True, index=True)
+    name = Column(String)
+    description = Column(Text)
+    source = Column(String)
+    license = Column(String)
+    profile = Column(Text)     # JSON: modalities, languages, domains, tags, has_ground_truth, item_schema
+    created_at = Column(String)
+
+class DatasetItem(Base):
+    __tablename__ = "dataset_items"
+    id = Column(Integer, primary_key=True)
+    dataset_id = Column(String, ForeignKey("datasets.dataset_id"))
+    item_index = Column(Integer)
+    payload = Column(Text)     # JSON per item, e.g., {"prompt":"...", "ref_answer":"..."}
+    tags = Column(Text)        # JSON array
+
+Ensure Base.metadata.create_all(bind=engine) still runs on startup.
+
+2) Pydantic schemas (backend/schemas.py)
+Add:
+class DatasetProfile(BaseModel):
+    modalities: list[str] = []
+    languages: list[str] = []
+    domains: list[str] = []
+    tags: list[str] = []
+    has_ground_truth: bool = False
+    item_schema: dict = {}
+
+class DatasetIn(BaseModel):
+    dataset_id: str
+    name: str
+    description: str | None = None
+    source: str | None = None
+    license: str | None = None
+    profile: DatasetProfile
+
+class DatasetItemIn(BaseModel):
+    dataset_id: str
+    item_index: int
+    payload: dict
+    tags: list[str] = []
+
+class StandardMetricIn(BaseModel):
+    standard_code: str
+    metric_code: str
+    required: bool = False
+
+class MetricUpdateIn(BaseModel):
+    code: str
+    unit: str | None = None
+    aggregation: str | None = None
+    applicability: dict | None = None
+
+3) Seed data
+- Update data/metrics.json to include unit, aggregation, and applicability for each metric.
+- Create data/standards_metrics.json mapping standard_code to metric_code (+ required).
+- Create a sample dataset profile JSON (data/datasets/qa_small_en.profile.json) and items file (data/datasets/qa_small_en.jsonl).
+
+4) Applicability matching utility
+Create backend/utils/applicability.py:
+def _intersects(a, b): return bool(set(a) & set(b))
+
+def dataset_supports_metric(dataset_profile: dict, items_stats: dict, applicability: dict) -> tuple[bool, list[str]]:
+    reasons = []
+    req = (applicability or {}).get("requires", {})
+    dis = (applicability or {}).get("disallows", {})
+
+    if req.get("modality") and not _intersects(dataset_profile.get("modalities", []), req["modality"]):
+        reasons.append("modality mismatch")
+    if req.get("languages_any") and not _intersects(dataset_profile.get("languages", []), req["languages_any"]):
+        reasons.append("language mismatch")
+    if req.get("dataset_tags_all"):
+        tags = set(dataset_profile.get("tags", []))
+        if not set(req["dataset_tags_all"]).issubset(tags):
+            reasons.append("missing required dataset tags")
+    if req.get("needs_ground_truth") and not dataset_profile.get("has_ground_truth", False):
+        reasons.append("ground_truth required")
+    ref_field = req.get("requires_reference_field")
+    if ref_field and not items_stats.get("all_have_ref_field", False):
+        reasons.append(f"dataset items missing field '{ref_field}'")
+    if req.get("min_items") and items_stats.get("count", 0) < req["min_items"]:
+        reasons.append(f"min_items {req['min_items']} not met")
+
+    dis_any = set((dis.get("dataset_tags_any") or []))
+    if dis_any & set(dataset_profile.get("tags", [])):
+        reasons.append("dataset contains disallowed tags")
+
+    return (len(reasons) == 0, reasons)
+
+Add a helper to compute items_stats (count; all_have_ref_field when required).
+
+5) Endpoints (backend/app.py)
+Import:
+from .models import Dataset, DatasetItem, StandardMetric, Metric
+from .schemas import DatasetIn, DatasetItemIn, StandardMetricIn, MetricUpdateIn
+from .utils.applicability import dataset_supports_metric
+
+Add endpoints:
+POST /datasets            -> upsert Dataset
+POST /datasets/items      -> upsert DatasetItem
+POST /standards/metrics   -> link Standard to Metric
+POST /metrics/update      -> update Metric unit/aggregation/applicability
+
+6) Enforce compatibility in /plan
+In POST /plan:
+- Parse dataset_ref. If {"type":"dataset_id","value":"<id>"} load Dataset.profile and items_stats.
+- For each selected metric code, load applicability (from DB or fallback file) and call dataset_supports_metric.
+- If any metric is incompatible, return HTTP 400 with a list of {metric_code, reasons[]} and message.
+- If compatible: set Run.selected_metric_codes (JSON array string) and set Run.mapping_snapshot to the current Mapping JSON for that system.
+
+7) Snapshot mapping on /run
+In POST /run, if run.mapping_snapshot is null/empty, set it to the mapping JSON used for execution and commit.
+
+8) Postgres readiness
+- No changes now. Ensure JSON is serialized/deserialized consistently.
+- Keep DATABASE_URL switchable. Alembic migrations to be added later.
+
+9) Best-practices review file
+Create REVIEW_NOTES.md at repo root. Include:
+- Naming consistency and suggested indexes.
+- FK constraints and potential ON DELETE CASCADE.
+- JSON normalization trade-offs and what to move to JSONB indexes in Postgres.
+- Security notes (API keys, PII, dataset licensing).
+- Observability (logging, run/job IDs).
+- Pagination suggestions for listing endpoints.
+
+Acceptance criteria
+- DB initializes with new tables/columns.
+- Endpoints present and working: /datasets, /datasets/items, /standards/metrics, /metrics/update.
+- /plan rejects incompatible metric/dataset combos with explicit reasons.
+- Run.mapping_snapshot filled on first execute.
+- Run.selected_metric_codes populated on plan creation.
+- REVIEW_NOTES.md created with actionable checklist.
