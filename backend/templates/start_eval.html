@@ -2,6 +2,7 @@
 {% block content %}
   <h2 style="margin-top:0;">Start New Evaluation</h2>
   <form method="post" action="/ui/start">
+    <input type="hidden" name="eval_id" value="{{ eval_id }}" />
     <label>Standard</label>
     <select name="standard_code">
       <option value="ISO_24001">{{ standard.name or 'ISO 24001' }}</option>
@@ -24,4 +25,3 @@
     </div>
   </form>
 {% endblock %}
-

@@ -16,7 +16,7 @@
         </ul>
         <div style="margin-top:8px;">
           {% if 'Black-Box' in g.access %}
-            <a class="btn" href="/ui/api">Open Black-Box API Testing</a>
+            <a class="btn" href="/ui/api?eval_id={{ eval_id }}">Open Black-Box API Testing</a>
           {% else %}
             <button class="btn secondary" disabled>Coming soon</button>
           {% endif %}
@@ -27,4 +27,3 @@
     {% endfor %}
   </div>
 {% endblock %}
-

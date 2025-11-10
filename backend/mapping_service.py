@@ -145,16 +145,18 @@ def llm_analyze_error(status: int, resp_body: Dict[str, Any], req_body: Dict[str
     Returns: {"is_error": bool, "reasons": [str], "advice": [str]}
     """
     # Heuristic baseline
-    reasons = []
-    is_err = False
-    if status and status >= 400:
-        is_err = True
+    reasons: list[str] = []
+    # Primary rule: HTTP status < 400 means not an error
+    http_error = bool(status) and status >= 400
+    is_err = bool(http_error)
+    if http_error:
         reasons.append(f"HTTP status {status}")
-    body_text = json.dumps(resp_body).lower()
-    for rgx in ["error", "invalid api key", "not authorized", "missing", "bad request", "forbidden", "unauthorized"]:
-        if rgx in body_text:
-            is_err = True
-            if rgx != "error":
+    # Only consider body heuristics if status unknown (0/None)
+    if not status:
+        body_text = json.dumps(resp_body).lower()
+        for rgx in ["invalid api key", "not authorized", "missing", "bad request", "forbidden", "unauthorized"]:
+            if rgx in body_text:
+                is_err = True
                 reasons.append(rgx)
     baseline = {"is_error": is_err, "reasons": reasons, "advice": []}
 
@@ -191,8 +193,12 @@ Only output JSON.
     try:
         text = client.complete(prompt).strip()
         data = json.loads(text)
+        # Enforce status-driven rule: 200–399 -> not error
+        is_error_final = bool(data.get("is_error", is_err))
+        if status and 200 <= int(status) < 400:
+            is_error_final = False
         return {
-            "is_error": bool(data.get("is_error", is_err)),
+            "is_error": is_error_final,
             "reasons": list(data.get("reasons", reasons) or []),
             "advice": list(data.get("advice", []) or []),
         }

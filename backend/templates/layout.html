@@ -40,7 +40,13 @@
     thead { background: #0e1726; color: var(--muted); }
     th, td { padding: 12px; border-bottom: 1px solid var(--border); text-align: left; }
     tr:hover td { background: rgba(255,255,255,0.02); }
-    pre { background: #0e1726; padding: 12px; border-radius: 12px; overflow: auto; border:1px solid var(--border); }
+    pre.code { background: #0b1528; padding: 12px; border-radius: 12px; overflow: auto; border:1px solid rgba(96,165,250,0.25); }
+    .expander { border:1px solid var(--border); border-radius: 12px; padding: 0; overflow:hidden; background: #0e1726; }
+    .expander summary { list-style:none; cursor:pointer; padding:12px 14px; font-weight:600; display:flex; align-items:center; justify-content:space-between; }
+    .expander summary::marker { display:none; }
+    .expander summary span.chev { transition: transform .2s ease; }
+    .expander[open] summary span.chev { transform: rotate(90deg); }
+    .expander .content { padding: 12px 14px; border-top:1px solid var(--border); }
     .error { color: #fda4af; font-weight: 600; }
     a { color: var(--accent-2); text-decoration: none; }
   </style>

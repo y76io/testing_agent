@@ -40,6 +40,7 @@ def _ensure_columns_sqlite():
             ensure("metrics", "applicability", "TEXT")
             ensure("runs", "mapping_snapshot", "TEXT")
             ensure("runs", "selected_metric_codes", "TEXT")
+            ensure("runs", "evaluation_id", "VARCHAR")
             ensure("mappings", "input_placeholder", "VARCHAR")
             ensure("mappings", "message_extractor", "TEXT")
             ensure("mappings", "session_id_field", "VARCHAR")
@@ -145,26 +146,41 @@ def _load_standard_points():
     pts = []
     for c in data.get("clauses", []) or []:
         for s in c.get("subclauses", []) or []:
-            pts.append({
-                "id": s.get("id"),
-                "name": s.get("name"),
-                "evaluation_mode": s.get("evaluation_mode"),
-                "access": s.get("access"),
-            })
+            eval_modes = s.get("evaluation_mode")
+            if isinstance(eval_modes, list):
+                modes = eval_modes
+            else:
+                modes = [eval_modes]
+            accesses = s.get("access")
+            if isinstance(accesses, list):
+                accs = accesses
+            else:
+                accs = [accesses]
+            for em in modes:
+                for ac in accs:
+                    pts.append({
+                        "id": s.get("id"),
+                        "name": s.get("name"),
+                        "evaluation_mode": em,
+                        "access": ac,
+                    })
     return {"name": name, "points": pts}
 
 
 @app.get("/ui/start", response_class=HTMLResponse)
 def ui_start_eval(request: Request):
     standard = _load_standard_points()
-    return templates.TemplateResponse("start_eval.html", {"request": request, "standard": standard})
+    import uuid
+    eval_id = f"eval-{uuid.uuid4()}"
+    return templates.TemplateResponse("start_eval.html", {"request": request, "standard": standard, "eval_id": eval_id})
 
 
 @app.post("/ui/start", response_class=HTMLResponse)
 def ui_start_eval_submit(request: Request,
                          standard_code: str = Form("ISO_24001"),
                          manual_metrics: str | None = Form(None),
-                         metric: list[str] | None = Form(None)):
+                         metric: list[str] | None = Form(None),
+                         eval_id: str = Form(...)):
     std = _load_standard_points()
     all_pts = std["points"]
     if manual_metrics:
@@ -178,22 +194,27 @@ def ui_start_eval_submit(request: Request,
         key = (p.get("evaluation_mode", "Unknown"), p.get("access", "Unknown"))
         groups.setdefault(key, []).append(p)
     grouped = [{"evaluation_mode": k[0], "access": k[1], "items": v} for k, v in groups.items()]
-    return templates.TemplateResponse("plan_sections.html", {"request": request, "standard_name": std["name"], "groups": grouped})
+    return templates.TemplateResponse("plan_sections.html", {"request": request, "standard_name": std["name"], "groups": grouped, "eval_id": eval_id})
 
 
 @app.get("/ui/api", response_class=HTMLResponse)
 def ui_api_tests(request: Request):
     db = SessionLocal()
     try:
-        api_runs = db.query(Run).filter((Run.mode == "manual")).order_by(Run.id.desc()).all()
-        return templates.TemplateResponse("api_list.html", {"request": request, "api_runs": api_runs})
+        eval_id = request.query_params.get('eval_id')
+        q = db.query(Run).filter((Run.mode == "manual"))
+        if eval_id:
+            q = q.filter(Run.evaluation_id == eval_id)
+        api_runs = q.order_by(Run.id.desc()).all()
+        return templates.TemplateResponse("api_list.html", {"request": request, "api_runs": api_runs, "eval_id": eval_id})
     finally:
         db.close()
 
 
 @app.get("/ui/new", response_class=HTMLResponse)
 def ui_new_form(request: Request):
-    return templates.TemplateResponse("new_eval.html", {"request": request})
+    eval_id = request.query_params.get('eval_id')
+    return templates.TemplateResponse("new_eval.html", {"request": request, "eval_id": eval_id})
 
 
 @app.post("/ui/new", response_class=HTMLResponse)
@@ -265,6 +286,17 @@ def ui_new_submit(request: Request,
         dataset={"type": "inline", "lines": [{"prompt": test_prompt}]}
     )
     create_plan(plan_payload)
+    # Attach evaluation_id to this run if provided
+    eval_id = request.query_params.get('eval_id')
+    if eval_id:
+        db2 = SessionLocal()
+        try:
+            r = db2.query(Run).filter_by(run_id=run_id).first()
+            if r:
+                r.evaluation_id = eval_id
+                db2.commit()
+        finally:
+            db2.close()
 
     # Execute
     # Execute with one-off headers/body modifications
@@ -347,7 +379,8 @@ def ui_new_submit(request: Request,
             "api_key_value": api_key_value,
             "add_session_id": bool(add_session_id),
             "session_id_field": session_id_field,
-        }
+        },
+        "eval_id": eval_id
     })
 
 

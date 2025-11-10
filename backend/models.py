@@ -57,6 +57,7 @@ class Run(Base):
     id = Column(Integer, primary_key=True)
     run_id = Column(String, unique=True, index=True)
     system_id = Column(String, ForeignKey("systems.system_id"))
+    evaluation_id = Column(String, nullable=True)
     mode = Column(String)            # standard | manual
     standard_code = Column(String, ForeignKey("standards.code"), nullable=True)
     dataset_ref = Column(String)

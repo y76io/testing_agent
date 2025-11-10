@@ -5,7 +5,7 @@
       <h2 style="margin:0; font-size:20px;">Black-Box API Tests</h2>
       <p style="margin:.25rem 0 0; color:var(--muted);">Create new tests for different agents/models or revisit previous ones.</p>
     </div>
-    <a class="btn" href="/ui/new">New API Test</a>
+    <a class="btn" href="/ui/new{% if eval_id %}?eval_id={{ eval_id }}{% endif %}">New API Test</a>
   </div>
   <div style="height:12px;"></div>
   <table>
@@ -24,4 +24,3 @@
     </tbody>
   </table>
 {% endblock %}
-

@@ -38,14 +38,14 @@
       {% endif %}
     {% endif %}
 
-    <details>
-      <summary>Show response preview</summary>
-      <pre>{{ a.response.body | tojson(indent=2) }}</pre>
+    <details class="expander">
+      <summary>Response preview <span class="chev">▶</span></summary>
+      <div class="content"><pre class="code">{{ a.response.body | tojson(indent=2) }}</pre></div>
     </details>
 
-    <details>
-      <summary>Show request preview</summary>
-      <pre>{{ a.request | tojson(indent=2) }}</pre>
+    <details class="expander" style="margin-top:8px;">
+      <summary>Request preview <span class="chev">▶</span></summary>
+      <div class="content"><pre class="code">{{ a.request | tojson(indent=2) }}</pre></div>
     </details>
   {% else %}
     <p>No artifacts were captured. Please verify the endpoint and try again.</p>
@@ -70,11 +70,12 @@
 
   <form method="get" action="/ui/configure" style="margin-top:1rem; display:inline-block;">
     <input type="hidden" name="system_id" value="{{ system_id }}"/>
+    {% if eval_id %}<input type="hidden" name="eval_id" value="{{ eval_id }}" />{% endif %}
     <button class="btn" type="submit">Confirm API</button>
   </form>
   <details style="margin-top: 1rem;">
     <summary>Adjust and Re-run</summary>
-    <form method="post" action="/ui/new" onsubmit="showLoading()" style="margin-top:.75rem;">
+    <form method="post" action="/ui/new{% if eval_id %}?eval_id={{ eval_id }}{% endif %}" onsubmit="showLoading()" style="margin-top:.75rem;">
       <input type="hidden" name="system_id" value="{{ prev.system_id }}" />
       <label>Name</label>
       <input name="name" value="{{ prev.name }}" />
