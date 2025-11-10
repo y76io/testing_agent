@@ -31,9 +31,9 @@
       <h3>Extracted Message</h3>
       <pre style="white-space:pre-wrap;">{{ extracted_preview or a.response.message_extracted or '' }}</pre>
       {% if mapping.message_extractor %}
-        <details>
-          <summary>Show extractor function</summary>
-          <pre>{{ mapping.message_extractor }}</pre>
+        <details class="expander" style="margin-top:8px;">
+          <summary>Extractor function <span class="chev">▶</span></summary>
+          <div class="content"><pre class="code">{{ mapping.message_extractor }}</pre></div>
         </details>
       {% endif %}
     {% endif %}
@@ -52,20 +52,22 @@
   {% endif %}
 
   <h3>Detected Mapping</h3>
-  <details open>
-    <summary>Mapping details</summary>
-    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
-      <div>
-        <h4>Prompt Paths</h4>
-        <pre>{{ mapping.prompt_paths | tojson(indent=2) }}</pre>
+  <details class="expander" open>
+    <summary>Mapping details <span class="chev">▶</span></summary>
+    <div class="content">
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+        <div>
+          <h4>Prompt Paths</h4>
+          <pre class="code">{{ mapping.prompt_paths | tojson(indent=2) }}</pre>
+        </div>
+        <div>
+          <h4>Response Paths</h4>
+          <pre class="code">{{ mapping.response_paths | tojson(indent=2) }}</pre>
+        </div>
       </div>
-      <div>
-        <h4>Response Paths</h4>
-        <pre>{{ mapping.response_paths | tojson(indent=2) }}</pre>
-      </div>
+      <h4>Error Rules</h4>
+      <pre class="code">{{ mapping.error_rules | tojson(indent=2) }}</pre>
     </div>
-    <h4>Error Rules</h4>
-    <pre>{{ mapping.error_rules | tojson(indent=2) }}</pre>
   </details>
 
   <form method="get" action="/ui/configure" style="margin-top:1rem; display:inline-block;">
@@ -73,8 +75,9 @@
     {% if eval_id %}<input type="hidden" name="eval_id" value="{{ eval_id }}" />{% endif %}
     <button class="btn" type="submit">Confirm API</button>
   </form>
-  <details style="margin-top: 1rem;">
-    <summary>Adjust and Re-run</summary>
+  <details class="expander" style="margin-top: 1rem;">
+    <summary>Adjust and Re-run <span class="chev">▶</span></summary>
+    <div class="content">
     <form method="post" action="/ui/new{% if eval_id %}?eval_id={{ eval_id }}{% endif %}" onsubmit="showLoading()" style="margin-top:.75rem;">
       <input type="hidden" name="system_id" value="{{ prev.system_id }}" />
       <label>Name</label>
@@ -111,5 +114,6 @@
         <button class="btn" type="submit">Run Again</button>
       </div>
     </form>
+    </div>
   </details>
 {% endblock %}

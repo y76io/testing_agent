@@ -3,25 +3,38 @@
   <h2 style="margin-top:0;">Start New Evaluation</h2>
   <form method="post" action="/ui/start">
     <input type="hidden" name="eval_id" value="{{ eval_id }}" />
-    <label>Standard</label>
-    <select name="standard_code">
-      <option value="ISO_24001">{{ standard.name or 'ISO 24001' }}</option>
-    </select>
-
-    <label style="display:flex; align-items:center; gap:8px; margin-top:12px;">
-      <input type="checkbox" name="manual_metrics" value="1" onclick="document.getElementById('metrics-box').style.display=this.checked?'block':'none'"> Choose metrics manually
-    </label>
-    <div id="metrics-box" style="display:none; margin-top:8px; max-height:260px; overflow:auto; border:1px solid var(--border); border-radius:10px; padding:8px;">
-      {% for p in standard.points %}
-        <label style="display:flex; align-items:center; gap:8px; margin:6px 0;">
-          <input type="checkbox" name="metric" value="{{ p.id }}"> {{ p.id }} — {{ p.name }}
-          <span style="color:var(--muted);">({{ p.evaluation_mode }}, {{ p.access }})</span>
+    <div class="start-grid">
+      <div style="min-width: 280px;">
+        <label>Standard</label>
+        <select name="standard_code">
+          <option value="ISO_24001">{{ standard.name or 'ISO 24001' }}</option>
+        </select>
+        <label style="display:flex; align-items:center; gap:8px; margin-top:12px;">
+          <input type="checkbox" name="manual_metrics" value="1" onclick="toggleMetricsBox(this)"> Choose metrics manually
         </label>
-      {% endfor %}
-    </div>
-
-    <div style="margin-top:1rem;">
-      <button class="btn" type="submit">Continue</button>
+        <div style="margin-top:1rem;">
+          <button class="btn" type="submit">Continue</button>
+        </div>
+      </div>
+      <div id="metrics-box" class="metrics-box" style="display:none;">
+        <div class="metrics-list">
+          {% for p in standard.points %}
+          <div class="metric-row">
+            <div><input type="checkbox" name="metric" value="{{ p.id }}"></div>
+            <div>
+              <div>{{ p.id }} — {{ p.name }}</div>
+              <div class="meta">{{ p.evaluation_mode }} • {{ p.access }}</div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
     </div>
   </form>
+  <script>
+    function toggleMetricsBox(cb){
+      const box = document.getElementById('metrics-box');
+      if (box) box.style.display = cb.checked ? 'block' : 'none';
+    }
+  </script>
 {% endblock %}

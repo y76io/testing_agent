@@ -36,12 +36,13 @@
     .btn.secondary { background: transparent; color: var(--text); border: 1px solid var(--border); }
     .card { position:relative; background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 18px; box-shadow: 0 10px 30px rgba(0,0,0,0.2), 0 0 0 1px rgba(96,165,250,0.25) inset; }
     .card::after { content:""; position:absolute; inset:0; border-radius:16px; pointer-events:none; box-shadow: 0 0 0 1px rgba(34,211,238,0.18) inset; }
+    .card-inner { background: #0f1b2f; border:1px solid rgba(148,163,184,0.16); border-radius: 12px; padding: 12px; }
     table { width: 100%; border-collapse: collapse; border-radius: 12px; overflow: hidden; }
     thead { background: #0e1726; color: var(--muted); }
     th, td { padding: 12px; border-bottom: 1px solid var(--border); text-align: left; }
     tr:hover td { background: rgba(255,255,255,0.02); }
     pre.code { background: #0b1528; padding: 12px; border-radius: 12px; overflow: auto; border:1px solid rgba(96,165,250,0.25); }
-    .expander { border:1px solid var(--border); border-radius: 12px; padding: 0; overflow:hidden; background: #0e1726; }
+    .expander { border:1px solid rgba(148,163,184,0.18); border-radius: 12px; padding: 0; overflow:hidden; background: #0f1b2f; }
     .expander summary { list-style:none; cursor:pointer; padding:12px 14px; font-weight:600; display:flex; align-items:center; justify-content:space-between; }
     .expander summary::marker { display:none; }
     .expander summary span.chev { transition: transform .2s ease; }
@@ -49,12 +50,23 @@
     .expander .content { padding: 12px 14px; border-top:1px solid var(--border); }
     .error { color: #fda4af; font-weight: 600; }
     a { color: var(--accent-2); text-decoration: none; }
+    /* Start page metrics list */
+    .start-grid { display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap; }
+    .metrics-box { width: 420px; max-height: 300px; overflow:auto; border:1px solid var(--border); border-radius: 12px; padding:8px; background:#0d1526; }
+    .metrics-list { display:flex; flex-direction:column; gap:6px; }
+    .metric-row { display:grid; grid-template-columns: 24px 1fr; gap:10px; align-items:start; }
+    .metric-row .meta { color: var(--muted); font-size: 12px; }
   </style>
   {% block head %}{% endblock %}
   <script>
     function showLoading() {
       const ov = document.getElementById('loading-overlay');
-      if (ov) ov.style.display = 'flex';
+      if (ov) {
+        ov.style.display = 'flex';
+        const tx = document.getElementById('loading-text');
+        if (tx) tx.textContent = 'Sending request…';
+        setTimeout(()=>{ const tx2 = document.getElementById('loading-text'); if (tx2) tx2.textContent = 'Waiting for response…'; }, 600);
+      }
     }
     function hideLoading() {
       const ov = document.getElementById('loading-overlay');
@@ -71,7 +83,7 @@
           <circle cx="12" cy="12" r="10" stroke="#334155" stroke-width="4"/>
           <path d="M22 12a10 10 0 0 0-10-10" stroke="#60a5fa" stroke-width="4"/>
         </svg>
-        <span>Sending request…</span>
+        <span id="loading-text">Sending request…</span>
       </div>
     </div>
     <style>@keyframes spin{to{transform:rotate(360deg)}}</style>

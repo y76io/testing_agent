@@ -5,16 +5,18 @@
   <div style="display:grid; grid-template-columns: 1fr; gap: 14px;">
     {% for g in groups %}
       <div class="card">
-        <h3 style="margin:0 0 6px;">{{ g.evaluation_mode }} — {{ g.access }}</h3>
-        <ul style="margin: 8px 0 0 16px;">
+        <h3 style="margin:0 0 10px;">{{ g.evaluation_mode }} — {{ g.access }}</h3>
+        <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap:10px;">
           {% for it in g['items'][:6] %}
-            <li>{{ it.id }} — {{ it.name }}</li>
+            <div class="card-inner">
+              <div style="font-weight:600;">{{ it.id }} — {{ it.name }}</div>
+            </div>
           {% endfor %}
           {% if g['items']|length > 6 %}
-            <li style="color:var(--muted);">… and {{ g['items']|length - 6 }} more</li>
+            <div class="card-inner" style="color:var(--muted);">… and {{ g['items']|length - 6 }} more</div>
           {% endif %}
-        </ul>
-        <div style="margin-top:8px;">
+        </div>
+        <div style="margin-top:12px;">
           {% if 'Black-Box' in g.access %}
             <a class="btn" href="/ui/api?eval_id={{ eval_id }}">Open Black-Box API Testing</a>
           {% else %}
