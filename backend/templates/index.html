@@ -26,13 +26,13 @@
           {% if standard.groups and standard.groups|length %}
             {% for g in standard.groups %}
               <details style="margin:6px 0;" {% if 'Black-Box' in g.access %}open{% endif %}>
-                <summary><strong>{{ g.evaluation_mode }}</strong> — {{ g.access }} ({{ g.items|length }})</summary>
+                <summary><strong>{{ g.evaluation_mode }}</strong> — {{ g.access }} ({{ g['items']|length }})</summary>
                 <ul style="margin:6px 0 0 16px;">
-                  {% for it in g.items[:5] %}
+                  {% for it in g['items'][:5] %}
                     <li>{{ it.id }} — {{ it.name }}</li>
                   {% endfor %}
-                  {% if g.items|length > 5 %}
-                    <li style="color:var(--muted);">… and {{ g.items|length - 5 }} more</li>
+                  {% if g['items']|length > 5 %}
+                    <li style="color:var(--muted);">… and {{ g['items']|length - 5 }} more</li>
                   {% endif %}
                 </ul>
                 {% if 'Black-Box' in g.access %}
