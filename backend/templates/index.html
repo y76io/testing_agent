@@ -1,27 +1,106 @@
 {% extends 'layout.html' %}
 {% block content %}
-  <div style="display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;">
-    <div>
-      <h2 style="margin:0; font-size:20px;">Recent Runs</h2>
-      <p style="margin:.25rem 0 0; color:var(--muted);">Inspect results or start a new evaluation.</p>
-    </div>
-    <a class="btn" href="/ui/new">New Evaluation</a>
+  <div style="display:grid; grid-template-columns: 1fr; gap:16px;">
+    <section>
+      <h2 style="margin:0; font-size:20px;">Start New Evaluation</h2>
+      <p style="margin:.25rem 0 0; color:var(--muted);">Pick a standard or choose metrics manually. You can run API connectivity tests under the Black-Box section.</p>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin-top:12px;">
+        <div>
+          <label>Standard</label>
+          <select id="standard-select">
+            <option value="ISO_24001">{{ standard.name or 'ISO 24001' }}</option>
+          </select>
+          <label style="display:flex; align-items:center; gap:8px; margin-top:12px;">
+            <input type="checkbox" id="manual-metrics" onchange="toggleMetrics()"> Choose metrics manually
+          </label>
+          <div id="metrics-box" style="display:none; margin-top:8px; max-height:220px; overflow:auto; border:1px solid var(--border); border-radius:10px; padding:8px;">
+            {% for m in metrics %}
+              <label style="display:flex; align-items:center; gap:8px; margin:6px 0;">
+                <input type="checkbox" name="metric" value="{{ m.code }}"> {{ m.code }} — <span style="color:var(--muted);">{{ m.type }}</span>
+              </label>
+            {% endfor %}
+          </div>
+        </div>
+        <div>
+          <h3 style="margin:0 0 6px; font-size:16px;">Standard Overview</h3>
+          {% if standard.groups and standard.groups|length %}
+            {% for g in standard.groups %}
+              <details style="margin:6px 0;" {% if 'Black-Box' in g.access %}open{% endif %}>
+                <summary><strong>{{ g.evaluation_mode }}</strong> — {{ g.access }} ({{ g.items|length }})</summary>
+                <ul style="margin:6px 0 0 16px;">
+                  {% for it in g.items[:5] %}
+                    <li>{{ it.id }} — {{ it.name }}</li>
+                  {% endfor %}
+                  {% if g.items|length > 5 %}
+                    <li style="color:var(--muted);">… and {{ g.items|length - 5 }} more</li>
+                  {% endif %}
+                </ul>
+                {% if 'Black-Box' in g.access %}
+                  <div style="margin-top:8px;">
+                    <a class="btn" href="/ui/new">Go to Black-Box API testing</a>
+                  </div>
+                {% endif %}
+              </details>
+            {% endfor %}
+          {% else %}
+            <p style="color:var(--muted);">No standard details available.</p>
+          {% endif %}
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;">
+        <div>
+          <h2 style="margin:0; font-size:20px;">Recent Runs</h2>
+          <p style="margin:.25rem 0 0; color:var(--muted);">Inspect results across all evaluation types.</p>
+        </div>
+      </div>
+      <div style="height:12px;"></div>
+      <table>
+        <thead><tr><th>Run ID</th><th>System</th><th>Status</th><th>Overall</th><th>Started</th></tr></thead>
+        <tbody>
+          {% for r in runs %}
+          <tr>
+            <td><a href="/ui/run/{{ r.run_id }}">{{ r.run_id }}</a></td>
+            <td>{{ r.system_id }}</td>
+            <td>{{ r.status }}</td>
+            <td>{{ '%.3f'|format(r.overall_score or 0.0) }}</td>
+            <td>{{ r.started_at }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5">No runs yet. Start a new evaluation above.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2 style="margin:0; font-size:20px;">Recent Black-Box API Tests</h2>
+      <div style="height:12px;"></div>
+      <table>
+        <thead><tr><th>Run ID</th><th>System</th><th>Status</th><th>Started</th></tr></thead>
+        <tbody>
+          {% for r in api_runs %}
+          <tr>
+            <td><a href="/ui/run/{{ r.run_id }}">{{ r.run_id }}</a></td>
+            <td>{{ r.system_id }}</td>
+            <td>{{ r.status }}</td>
+            <td>{{ r.started_at }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="4">No API tests yet. Use the Black-Box link above.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
   </div>
-  <div style="height:12px;"></div>
-  <table>
-    <thead><tr><th>Run ID</th><th>System</th><th>Status</th><th>Overall</th><th>Started</th></tr></thead>
-    <tbody>
-      {% for r in runs %}
-      <tr>
-        <td><a href="/ui/run/{{ r.run_id }}">{{ r.run_id }}</a></td>
-        <td>{{ r.system_id }}</td>
-        <td>{{ r.status }}</td>
-        <td>{{ '%.3f'|format(r.overall_score or 0.0) }}</td>
-        <td>{{ r.started_at }}</td>
-      </tr>
-      {% else %}
-      <tr><td colspan="5">No runs yet. Click “New Evaluation” to begin.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
+
+  <script>
+    function toggleMetrics(){
+      const cb = document.getElementById('manual-metrics');
+      const box = document.getElementById('metrics-box');
+      box.style.display = cb.checked ? 'block' : 'none';
+    }
+  </script>
 {% endblock %}

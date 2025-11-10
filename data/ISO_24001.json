@@ -1,0 +1,321 @@
+{
+  "standard": {
+    "name": "ISO/IEC 42001:2023 — Artificial Intelligence Management System (AIMS)",
+    "reference": "https://www.iso.org/standard/42001",
+    "description": "Requirements for establishing, implementing, maintaining and continually improving an AI Management System (AIMS) that governs responsible development, provision, and use of AI systems."
+  },
+  "evaluation_modes": [
+    "System-Level (Executable)",
+    "Evidence-Based (Uploaded/Static)",
+    "Organizational-Judgment (People/Governance)"
+  ],
+  "access_types": [
+    "Black-Box (User-Level)",
+    "Internal"
+  ],
+  "clauses": [
+    {
+      "number": 1,
+      "title": "Scope",
+      "subclauses": [
+        {
+          "id": "1.1",
+          "name": "Scope definition",
+          "evaluation_mode": "Evidence-Based (Uploaded/Static)",
+          "access": "Internal",
+          "methods": [
+            "Verify documented scope statement listing in-scope AI systems and exclusions."
+          ]
+        }
+      ]
+    },
+    {
+      "number": 2,
+      "title": "Normative references",
+      "subclauses": [
+        {
+          "id": "2.1",
+          "name": "Referenced standards",
+          "evaluation_mode": "Evidence-Based (Uploaded/Static)",
+          "access": "Internal",
+          "methods": [
+            "Check compliance documentation cites applicable references (e.g., ISO/IEC 22989, 23894)."
+          ]
+        }
+      ]
+    },
+    {
+      "number": 3,
+      "title": "Terms and definitions",
+      "subclauses": [
+        {
+          "id": "3.1",
+          "name": "Terminology alignment",
+          "evaluation_mode": "Evidence-Based (Uploaded/Static)",
+          "access": "Internal",
+          "methods": [
+            "Scan policies/procedures for consistent use of defined AI terms."
+          ]
+        }
+      ]
+    },
+    {
+      "number": 4,
+      "title": "Context of the organization",
+      "subclauses": [
+        {
+          "id": "4.1",
+          "name": "Understanding the organization and its context",
+          "evaluation_mode": "Evidence-Based (Uploaded/Static)",
+          "access": "Internal",
+          "methods": [
+            "Review context assessment (internal/external issues) and AI landscape inventory."
+          ]
+        },
+        {
+          "id": "4.2",
+          "name": "Interested parties and their requirements",
+          "evaluation_mode": "Evidence-Based (Uploaded/Static)",
+          "access": "Internal",
+          "methods": [
+            "Check stakeholder register and requirements mapping."
+          ]
+        },
+        {
+          "id": "4.3",
+          "name": "Determining the scope of the AIMS",
+          "evaluation_mode": "Evidence-Based (Uploaded/Static)",
+          "access": "Internal",
+          "methods": [
+            "Confirm boundary statement and rationale for included/excluded AI systems."
+          ]
+        },
+        {
+          "id": "4.4",
+          "name": "AI Management System (AIMS)",
+          "evaluation_mode": "Evidence-Based (Uploaded/Static)",
+          "access": "Internal",
+          "methods": [
+            "Verify defined processes for operating, monitoring, reviewing, and improving AIMS."
+          ]
+        }
+      ]
+    },
+    {
+      "number": 5,
+      "title": "Leadership",
+      "subclauses": [
+        {
+          "id": "5.1",
+          "name": "Leadership and commitment",
+          "evaluation_mode": "Organizational-Judgment (People/Governance)",
+          "access": "Internal",
+          "methods": [
+            "Interview/top-management attestations; review meeting minutes assigning accountability."
+          ]
+        },
+        {
+          "id": "5.2",
+          "name": "AI policy",
+          "evaluation_mode": "Evidence-Based (Uploaded/Static)",
+          "access": "Internal",
+          "methods": [
+            "Check existence, communication, and versioning of the AI policy."
+          ]
+        },
+        {
+          "id": "5.3",
+          "name": "Organizational roles, responsibilities and authorities",
+          "evaluation_mode": "Evidence-Based (Uploaded/Static)",
+          "access": "Internal",
+          "methods": [
+            "Review RACI matrices, org charts, and delegated authorities."
+          ]
+        }
+      ]
+    },
+    {
+      "number": 6,
+      "title": "Planning",
+      "subclauses": [
+        {
+          "id": "6.1",
+          "name": "Actions to address risks and opportunities",
+          "evaluation_mode": "Evidence-Based (Uploaded/Static)",
+          "access": "Internal",
+          "methods": [
+            "Inspect risk register, treatment plans, and linkage to AI systems."
+          ]
+        },
+        {
+          "id": "6.2",
+          "name": "AI objectives and planning to achieve them",
+          "evaluation_mode": "Evidence-Based (Uploaded/Static)",
+          "access": "Internal",
+          "methods": [
+            "Verify measurable AI objectives, KPIs, owners, and timelines."
+          ]
+        }
+      ]
+    },
+    {
+      "number": 7,
+      "title": "Support",
+      "subclauses": [
+        {
+          "id": "7.1",
+          "name": "Resources",
+          "evaluation_mode": "Evidence-Based (Uploaded/Static)",
+          "access": "Internal",
+          "methods": [
+            "Check resourcing records (people, tooling, budget) for AI operations."
+          ]
+        },
+        {
+          "id": "7.2",
+          "name": "Competence",
+          "evaluation_mode": "Evidence-Based (Uploaded/Static)",
+          "access": "Internal",
+          "methods": [
+            "Review training/qualification evidence for AI roles."
+          ]
+        },
+        {
+          "id": "7.3",
+          "name": "Awareness",
+          "evaluation_mode": "Evidence-Based (Uploaded/Static)",
+          "access": "Internal",
+          "methods": [
+            "Verify internal communications/awareness campaigns on AI policy and risks."
+          ]
+        },
+        {
+          "id": "7.4",
+          "name": "Communication",
+          "evaluation_mode": "Evidence-Based (Uploaded/Static)",
+          "access": "Internal",
+          "methods": [
+            "Check defined channels and responsibilities for AI-related communications."
+          ]
+        },
+        {
+          "id": "7.5",
+          "name": "Documented information",
+          "evaluation_mode": "Evidence-Based (Uploaded/Static)",
+          "access": "Internal",
+          "methods": [
+            "Confirm document control (versioning, retention) for AIMS artifacts."
+          ]
+        }
+      ]
+    },
+    {
+      "number": 8,
+      "title": "Operation",
+      "subclauses": [
+        {
+          "id": "8.1",
+          "name": "Operational planning and control",
+          "evaluation_mode": "System-Level (Executable)",
+          "access": "Black-Box (User-Level)",
+          "methods": [
+            "Run benchmark tasks for correctness/consistency on public-domain queries.",
+            "Measure latency, determinism, and session-to-session stability.",
+            "Verify escalation/deferral behavior on out-of-scope queries."
+          ]
+        },
+        {
+          "id": "8.2",
+          "name": "Risk treatment for AI systems",
+          "evaluation_mode": "System-Level (Executable) + Evidence-Based (Uploaded/Static)",
+          "access": "Black-Box (User-Level) + Internal",
+          "methods": [
+            "Adversarial/red-team prompts (prompt injection, jailbreak, data exfil).",
+            "Check safety fallbacks and abuse throttling via runtime probes.",
+            "Review uploaded risk controls, incident runbooks, and mitigation logs."
+          ]
+        },
+        {
+          "id": "8.3",
+          "name": "Data management, quality, and security",
+          "evaluation_mode": "System-Level (Executable)",
+          "access": "Internal + Black-Box (User-Level)",
+          "methods": [
+            "Probe for PII leakage and privacy violations with synthetic inputs.",
+            "Validate masking/anonymization responses and refusal behaviors.",
+            "Corroborate with internal data-flow diagrams and access logs (if provided)."
+          ]
+        },
+        {
+          "id": "8.4",
+          "name": "Monitoring and evaluation of AI performance",
+          "evaluation_mode": "System-Level (Executable)",
+          "access": "Black-Box (User-Level)",
+          "methods": [
+            "Continuous factuality, robustness, and bias persona tests.",
+            "Drift detection across periodic test suites.",
+            "Produce automated conformance scorecards and trend lines."
+          ]
+        }
+      ]
+    },
+    {
+      "number": 9,
+      "title": "Performance evaluation",
+      "subclauses": [
+        {
+          "id": "9.1",
+          "name": "Monitoring, measurement, analysis and evaluation",
+          "evaluation_mode": "System-Level (Executable) + Evidence-Based (Uploaded/Static)",
+          "access": "Black-Box (User-Level) + Internal",
+          "methods": [
+            "Compare black-box metrics with internal telemetry (SLOs, error rates).",
+            "Cross-validate internal KPIs against observed benchmark results."
+          ]
+        },
+        {
+          "id": "9.2",
+          "name": "Internal audit",
+          "evaluation_mode": "Organizational-Judgment (People/Governance)",
+          "access": "Internal",
+          "methods": [
+            "Review audit plans/reports; interview audit owners on scope/coverage."
+          ]
+        },
+        {
+          "id": "9.3",
+          "name": "Management review",
+          "evaluation_mode": "Organizational-Judgment (People/Governance)",
+          "access": "Internal",
+          "methods": [
+            "Confirm executive reviews occurred; examine decisions and action items."
+          ]
+        }
+      ]
+    },
+    {
+      "number": 10,
+      "title": "Improvement",
+      "subclauses": [
+        {
+          "id": "10.1",
+          "name": "Nonconformity and corrective action",
+          "evaluation_mode": "Evidence-Based (Uploaded/Static)",
+          "access": "Internal",
+          "methods": [
+            "Inspect incident/CAPA records and root-cause analyses linked to AI systems."
+          ]
+        },
+        {
+          "id": "10.2",
+          "name": "Continual improvement",
+          "evaluation_mode": "Evidence-Based (Uploaded/Static)",
+          "access": "Internal",
+          "methods": [
+            "Verify improvement roadmap, version history, deprecation and rollout notes."
+          ]
+        }
+      ]
+    }
+  ]
+}

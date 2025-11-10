@@ -54,13 +54,48 @@ _ensure_columns_sqlite()
 def now_iso():
     return datetime.datetime.utcnow().isoformat()
 
+def _load_standard_summary():
+    import pathlib
+    p = pathlib.Path("data/ISO_24001.json")
+    if not p.exists():
+        return {"name": "ISO 24001", "groups": []}
+    data = json.loads(p.read_text())
+    name = data.get("standard", {}).get("name", "ISO 24001")
+    clauses = data.get("clauses", [])
+    groups = {}
+    for c in clauses:
+        for s in c.get("subclauses", []) or []:
+            em = s.get("evaluation_mode", "Unknown")
+            ac = s.get("access", "Unknown")
+            key = (em, ac)
+            groups.setdefault(key, []).append({
+                "id": s.get("id"),
+                "name": s.get("name"),
+                "methods": s.get("methods", [])
+            })
+    out = []
+    for (em, ac), items in groups.items():
+        out.append({"evaluation_mode": em, "access": ac, "items": items})
+    return {"name": name, "groups": out}
+
+def _load_metrics_list():
+    import pathlib
+    p = pathlib.Path("data/metrics.json")
+    if not p.exists():
+        return []
+    data = json.loads(p.read_text())
+    return [{"code": m.get("code"), "desc": m.get("description", ""), "type": m.get("type")} for m in data.get("metrics", [])]
+
 @app.get("/")
 def root(request: Request):
     # Render the UI index for the root path
     db = SessionLocal()
     try:
         runs = db.query(Run).order_by(Run.id.desc()).limit(50).all()
-        return templates.TemplateResponse("index.html", {"request": request, "runs": runs})
+        standard = _load_standard_summary()
+        metrics = _load_metrics_list()
+        api_runs = [r for r in runs if (r.mode or '').lower() == 'manual']
+        return templates.TemplateResponse("index.html", {"request": request, "runs": runs, "api_runs": api_runs, "standard": standard, "metrics": metrics})
     finally:
         db.close()
 
