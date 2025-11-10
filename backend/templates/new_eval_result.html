@@ -1,26 +1,60 @@
 {% extends 'layout.html' %}
 {% block content %}
-  <h2>Mapping Detected</h2>
-  <p><strong>System:</strong> {{ system_id }} &nbsp; <strong>Run:</strong> <a href="/ui/run/{{ run_id }}">{{ run_id }}</a></p>
-  <h3>Prompt Paths</h3>
-  <pre>{{ mapping.prompt_paths | tojson(indent=2) }}</pre>
-  <h3>Response Paths</h3>
-  <pre>{{ mapping.response_paths | tojson(indent=2) }}</pre>
-  <h3>Error Rules</h3>
-  <pre>{{ mapping.error_rules | tojson(indent=2) }}</pre>
+  <h2 style="margin-top:0;">API Connectivity Test</h2>
+  <p style="color:var(--muted); margin-top:.25rem;">We tried a single message to learn the API shape. Confirm the extracted message looks correct before continuing.</p>
 
-  <h2>Test Response</h2>
   {% if artifacts and artifacts|length > 0 %}
     {% set a = artifacts[0] %}
-    <p><strong>Status:</strong> {{ a.response.status }} &nbsp; <strong>Latency:</strong> {{ a.latency_ms }} ms &nbsp; <strong>Error:</strong> {{ a.error_detected }}</p>
-    <h4>Request</h4>
-    <pre>{{ a.request | tojson(indent=2) }}</pre>
-    <h4>Response</h4>
-    <pre>{{ a.response | tojson(indent=2) }}</pre>
+    <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:center;">
+      <span><strong>System:</strong> {{ system_id }}</span>
+      <span><strong>Run:</strong> <a href="/ui/run/{{ run_id }}">{{ run_id }}</a></span>
+      <span><strong>Status:</strong> {{ a.response.status }}</span>
+      <span><strong>Latency:</strong> {{ a.latency_ms }} ms</span>
+      <span><strong>Error:</strong> {{ a.error_detected }}</span>
+    </div>
+
+    <h3>Extracted Message</h3>
+    <pre style="white-space:pre-wrap;">{{ a.response.message_extracted or '' }}</pre>
+    {% if mapping.message_extractor %}
+      <details>
+        <summary>Show extractor function</summary>
+        <pre>{{ mapping.message_extractor }}</pre>
+      </details>
+    {% endif %}
+
+    <details>
+      <summary>Show response preview</summary>
+      <pre>{{ a.response.body | tojson(indent=2) }}</pre>
+    </details>
+
+    <details>
+      <summary>Show request preview</summary>
+      <pre>{{ a.request | tojson(indent=2) }}</pre>
+    </details>
   {% else %}
-    <p>No artifacts were captured.</p>
+    <p>No artifacts were captured. Please verify the endpoint and try again.</p>
   {% endif %}
 
-  <p><a class="btn" href="/ui">Back to Runs</a></p>
-{% endblock %}
+  <h3>Detected Mapping</h3>
+  <details open>
+    <summary>Mapping details</summary>
+    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+      <div>
+        <h4>Prompt Paths</h4>
+        <pre>{{ mapping.prompt_paths | tojson(indent=2) }}</pre>
+      </div>
+      <div>
+        <h4>Response Paths</h4>
+        <pre>{{ mapping.response_paths | tojson(indent=2) }}</pre>
+      </div>
+    </div>
+    <h4>Error Rules</h4>
+    <pre>{{ mapping.error_rules | tojson(indent=2) }}</pre>
+  </details>
 
+  <form method="get" action="/ui/configure" style="margin-top:1rem;">
+    <input type="hidden" name="system_id" value="{{ system_id }}"/>
+    <button class="btn" type="submit">Confirm API</button>
+    <a class="btn secondary" href="/ui/new" style="margin-left:8px;">Try Again</a>
+  </form>
+{% endblock %}

@@ -2,7 +2,7 @@
 {% block content %}
   <h2>New Blackbox API Evaluation</h2>
   {% if error %}<p class="error">{{ error }}</p>{% endif %}
-  <form method="post" action="/ui/new">
+  <form method="post" action="/ui/new" onsubmit="showLoading()">
     <label>System ID</label>
     <input name="system_id" required placeholder="my_agent_api">
 

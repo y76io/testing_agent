@@ -239,6 +239,12 @@ def ui_run_detail(request: Request, run_id: str):
     finally:
         db.close()
 
+
+@app.get("/ui/configure", response_class=HTMLResponse)
+def ui_configure(request: Request, system_id: str | None = None):
+    # Placeholder page for selecting standards/metrics after confirming API
+    return templates.TemplateResponse("configure.html", {"request": request, "system_id": system_id})
+
 @app.post("/sut")
 def create_or_update_sut(payload: SUTIn):
     db = SessionLocal()
@@ -438,7 +444,12 @@ def run_execute(payload: RunIn):
         mapping_obj = {
             "prompt_paths": json.loads(mapping.prompt_paths or "[]"),
             "response_paths": json.loads(mapping.response_paths or "[]"),
-            "error_rules": json.loads(mapping.error_rules or "{}")
+            "error_rules": json.loads(mapping.error_rules or "{}"),
+            "input_placeholder": mapping.input_placeholder or "${input}",
+            "session_id_field": mapping.session_id_field,
+            "api_key_name": mapping.api_key_name,
+            "api_key_value": mapping.api_key_value,
+            "message_extractor": mapping.message_extractor,
         }
         artifacts = execute_dataset(run.run_id, system, mapping_obj, ds)
         # snapshot mapping if not set

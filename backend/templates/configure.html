@@ -1,0 +1,8 @@
+{% extends 'layout.html' %}
+{% block content %}
+  <h2>Configure Evaluation</h2>
+  <p style="color:var(--muted);">Next, select standards and metrics to evaluate. (Coming soon.)</p>
+  {% if system_id %}<p><strong>System:</strong> {{ system_id }}</p>{% endif %}
+  <p><a class="btn secondary" href="/">Back to Home</a></p>
+{% endblock %}
+
