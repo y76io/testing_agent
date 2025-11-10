@@ -138,3 +138,63 @@ Return only the function code, no explanations.
             "    return ''\n"
         )
     return code
+
+
+def llm_analyze_error(status: int, resp_body: Dict[str, Any], req_body: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    """Ask LLM to determine if the response indicates an error and offer advice.
+    Returns: {"is_error": bool, "reasons": [str], "advice": [str]}
+    """
+    # Heuristic baseline
+    reasons = []
+    is_err = False
+    if status and status >= 400:
+        is_err = True
+        reasons.append(f"HTTP status {status}")
+    body_text = json.dumps(resp_body).lower()
+    for rgx in ["error", "invalid api key", "not authorized", "missing", "bad request", "forbidden", "unauthorized"]:
+        if rgx in body_text:
+            is_err = True
+            if rgx != "error":
+                reasons.append(rgx)
+    baseline = {"is_error": is_err, "reasons": reasons, "advice": []}
+
+    # Try LLM refinement
+    try:
+        client = GeminiClient()
+    except Exception:
+        client = None
+
+    if not client:
+        if is_err and not baseline["advice"]:
+            baseline["advice"] = [
+                "Verify API key header name/value.",
+                "Confirm request body schema (placeholder field).",
+                "Check authentication/authorization and allowed endpoint.",
+            ]
+        return baseline
+
+    prompt = f"""
+You analyze API responses. Decide if the response indicates an error vs a normal successful reply.
+Return strict JSON with keys: is_error (true/false), reasons (array of strings), advice (array of strings).
+
+Consider the HTTP status and body; if an error, provide practical advice on fixing the request (e.g., header name/value, missing fields, input format).
+
+HTTP status: {status}
+Request JSON (if available):
+{json.dumps(req_body or {}, indent=2)}
+
+Response JSON:
+{json.dumps(resp_body, indent=2)}
+
+Only output JSON.
+"""
+    try:
+        text = client.complete(prompt).strip()
+        data = json.loads(text)
+        return {
+            "is_error": bool(data.get("is_error", is_err)),
+            "reasons": list(data.get("reasons", reasons) or []),
+            "advice": list(data.get("advice", []) or []),
+        }
+    except Exception:
+        return baseline

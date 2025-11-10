@@ -9,7 +9,7 @@ from .schemas import (
     SUTIn, MappingDetectIn, MappingOut, PlanIn, RunIn, EvaluateIn, RunResultOut,
     DatasetIn, DatasetItemIn, StandardMetricIn, MetricUpdateIn,
 )
-from .mapping_service import detect_mapping, llm_generate_extractor
+from .mapping_service import detect_mapping, llm_generate_extractor, llm_analyze_error
 from .executor import execute_dataset
 from .evaluator import evaluate
 from .reporting import export_csv, export_pdf
@@ -197,19 +197,33 @@ def ui_new_submit(request: Request,
     # Load artifacts for display
     from .evaluator import load_artifacts
     artifacts = load_artifacts(run_id)
-    # Generate and save extractor function based on the first artifact response
+    # Analyze response for errors, and if not error, generate/save extractor and compute preview
+    analysis = {"is_error": False, "reasons": [], "advice": []}
     extractor_code = None
+    extracted_preview = ""
     if artifacts:
-        extractor_code = llm_generate_extractor(artifacts[0].get("response", {}).get("body", {}))
-        # Save extractor on the latest mapping for the system
-        db = SessionLocal()
-        try:
-            mapping_latest = db.query(Mapping).filter_by(system_id=system_id).order_by(Mapping.id.desc()).first()
-            if mapping_latest:
-                mapping_latest.message_extractor = extractor_code
-                db.commit()
-        finally:
-            db.close()
+        first = artifacts[0]
+        analysis = llm_analyze_error(first.get("response", {}).get("status", 0), first.get("response", {}).get("body", {}), first.get("request", {}).get("body", {}))
+        if not analysis.get("is_error"):
+            extractor_code = llm_generate_extractor(first.get("response", {}).get("body", {}))
+            # Save extractor on the latest mapping for the system
+            db = SessionLocal()
+            try:
+                mapping_latest = db.query(Mapping).filter_by(system_id=system_id).order_by(Mapping.id.desc()).first()
+                if mapping_latest:
+                    mapping_latest.message_extractor = extractor_code
+                    db.commit()
+            finally:
+                db.close()
+            # Compute extraction preview
+            if extractor_code:
+                ns = {}
+                try:
+                    exec(extractor_code, {"__builtins__": {}}, ns)
+                    if "extract_message" in ns and callable(ns["extract_message"]):
+                        extracted_preview = ns["extract_message"](first.get("response", {}).get("body", {})) or ""
+                except Exception:
+                    extracted_preview = ""
 
     return templates.TemplateResponse("new_eval_result.html", {
         "request": request,
@@ -225,6 +239,23 @@ def ui_new_submit(request: Request,
             "message_extractor": extractor_code,
         },
         "artifacts": artifacts,
+        "analysis": analysis,
+        "extracted_preview": extracted_preview,
+        # previous values to enable re-run on the same page
+        "prev": {
+            "system_id": system_id,
+            "name": name,
+            "endpoint": endpoint,
+            "method": method,
+            "headers_json": json.dumps(headers, indent=2),
+            "body_json": json.dumps(body, indent=2),
+            "test_prompt": test_prompt,
+            "add_api_key": bool(add_api_key),
+            "api_key_name": api_key_name,
+            "api_key_value": api_key_value,
+            "add_session_id": bool(add_session_id),
+            "session_id_field": session_id_field,
+        }
     })
 
 

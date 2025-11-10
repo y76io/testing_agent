@@ -13,13 +13,29 @@
       <span><strong>Error:</strong> {{ a.error_detected }}</span>
     </div>
 
-    <h3>Extracted Message</h3>
-    <pre style="white-space:pre-wrap;">{{ a.response.message_extracted or '' }}</pre>
-    {% if mapping.message_extractor %}
-      <details>
-        <summary>Show extractor function</summary>
-        <pre>{{ mapping.message_extractor }}</pre>
-      </details>
+    {% if analysis and analysis.is_error %}
+      <div class="error" style="margin: 8px 0 12px;">The response appears to be an error.</div>
+      {% if analysis.reasons and analysis.reasons|length %}
+        <h4>Reasons</h4>
+        <ul>
+          {% for r in analysis.reasons %}<li>{{ r }}</li>{% endfor %}
+        </ul>
+      {% endif %}
+      {% if analysis.advice and analysis.advice|length %}
+        <h4>Advice</h4>
+        <ul>
+          {% for r in analysis.advice %}<li>{{ r }}</li>{% endfor %}
+        </ul>
+      {% endif %}
+    {% else %}
+      <h3>Extracted Message</h3>
+      <pre style="white-space:pre-wrap;">{{ extracted_preview or a.response.message_extracted or '' }}</pre>
+      {% if mapping.message_extractor %}
+        <details>
+          <summary>Show extractor function</summary>
+          <pre>{{ mapping.message_extractor }}</pre>
+        </details>
+      {% endif %}
     {% endif %}
 
     <details>
@@ -52,9 +68,47 @@
     <pre>{{ mapping.error_rules | tojson(indent=2) }}</pre>
   </details>
 
-  <form method="get" action="/ui/configure" style="margin-top:1rem;">
+  <form method="get" action="/ui/configure" style="margin-top:1rem; display:inline-block;">
     <input type="hidden" name="system_id" value="{{ system_id }}"/>
     <button class="btn" type="submit">Confirm API</button>
-    <a class="btn secondary" href="/ui/new" style="margin-left:8px;">Try Again</a>
   </form>
+  <details style="margin-top: 1rem;">
+    <summary>Adjust and Re-run</summary>
+    <form method="post" action="/ui/new" onsubmit="showLoading()" style="margin-top:.75rem;">
+      <input type="hidden" name="system_id" value="{{ prev.system_id }}" />
+      <label>Name</label>
+      <input name="name" value="{{ prev.name }}" />
+      <label>Endpoint URL</label>
+      <input name="endpoint" value="{{ prev.endpoint }}" />
+      <label>HTTP Method</label>
+      <select name="method">
+        <option {% if prev.method=='POST' %}selected{% endif %}>POST</option>
+        <option {% if prev.method=='GET' %}selected{% endif %}>GET</option>
+      </select>
+      <label>Headers JSON</label>
+      <textarea name="headers_json" rows="6">{{ prev.headers_json }}</textarea>
+      <label>Request Body JSON</label>
+      <textarea name="body_json" rows="12">{{ prev.body_json }}</textarea>
+      <label>Test Prompt</label>
+      <input name="test_prompt" value="{{ prev.test_prompt }}" />
+      <div style="display:flex; gap: 16px; align-items:center; flex-wrap:wrap; margin-top: 1rem;">
+        <label style="display:flex; align-items:center; gap:6px; margin-top:0;">
+          <input type="checkbox" name="add_api_key" value="1" {% if prev.add_api_key %}checked{% endif %} />
+          Add API key header
+        </label>
+        <input name="api_key_name" value="{{ prev.api_key_name }}" placeholder="Header name" style="max-width:260px;">
+        <input name="api_key_value" value="{{ prev.api_key_value }}" placeholder="Key value" style="max-width:320px;">
+      </div>
+      <div style="display:flex; gap: 16px; align-items:center; flex-wrap:wrap; margin-top: .5rem;">
+        <label style="display:flex; align-items:center; gap:6px; margin-top:0;">
+          <input type="checkbox" name="add_session_id" value="1" {% if prev.add_session_id %}checked{% endif %} />
+          Add session_id to body
+        </label>
+        <input name="session_id_field" value="{{ prev.session_id_field }}" style="max-width:240px;">
+      </div>
+      <div style="margin-top: .75rem;">
+        <button class="btn" type="submit">Run Again</button>
+      </div>
+    </form>
+  </details>
 {% endblock %}
