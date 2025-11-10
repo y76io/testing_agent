@@ -23,6 +23,12 @@ class Mapping(Base):
     response_paths = Column(Text)    # JSON array string
     error_rules = Column(Text)       # JSON object string
     created_at = Column(String)
+    # New fields for placeholder/extraction-driven flow
+    input_placeholder = Column(String, nullable=True)  # e.g., "${input}" (default)
+    message_extractor = Column(Text, nullable=True)    # Python function code as text
+    session_id_field = Column(String, nullable=True)   # top-level key name for session id
+    api_key_name = Column(String, nullable=True)       # header key for API key
+    api_key_value = Column(String, nullable=True)      # header value for API key
 
 class Standard(Base):
     __tablename__ = "standards"

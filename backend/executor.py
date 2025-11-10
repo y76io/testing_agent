@@ -2,17 +2,40 @@ import json, time, httpx, os
 from typing import Dict, Any, List
 from .utils.jsonpath_utils import jsonpath_get, jsonpath_set
 from .config import ARTIFACTS_DIR
+import uuid
 
-def build_request(headers, body, prompt_paths, prompt_text):
+def _replace_input_placeholders(obj, placeholder: str, value: str):
+    if isinstance(obj, dict):
+        return {k: _replace_input_placeholders(v, placeholder, value) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_replace_input_placeholders(v, placeholder, value) for v in obj]
+    if isinstance(obj, str) and obj == placeholder:
+        return value
+    return obj
+
+
+def build_request(headers, body, prompt_paths, prompt_text, *, placeholder: str = "${input}", session_id_field: str | None = None, api_key_name: str | None = None, api_key_value: str | None = None):
     body_copy = json.loads(json.dumps(body))
-    placed = False
-    for p in prompt_paths:
-        if jsonpath_set(body_copy, p, prompt_text):
-            placed = True
-            break
-    if not placed and isinstance(body_copy, dict):
-        body_copy["input"] = prompt_text  # fallback
-    return headers, body_copy
+    # Replace placeholder occurrences
+    body_copy = _replace_input_placeholders(body_copy, placeholder, prompt_text)
+    # Add session id if requested
+    if session_id_field and isinstance(body_copy, dict):
+        body_copy.setdefault(session_id_field, str(uuid.uuid4()))
+    # Build headers, adding API key if provided
+    headers_copy = dict(headers or {})
+    if api_key_name and api_key_value:
+        headers_copy[api_key_name] = api_key_value
+    # Also support legacy JSONPath prompt_paths as fallback
+    if prompt_paths:
+        placed = False
+        tmp = json.loads(json.dumps(body_copy))
+        for p in prompt_paths:
+            if jsonpath_set(tmp, p, prompt_text):
+                placed = True
+                break
+        if placed:
+            body_copy = tmp
+    return headers_copy, body_copy
 
 def execute_dataset(run_id: str, system: Dict[str,Any], mapping: Dict[str,Any], dataset: List[Dict[str,Any]]):
     out_dir = os.path.join(ARTIFACTS_DIR, run_id)
@@ -21,7 +44,16 @@ def execute_dataset(run_id: str, system: Dict[str,Any], mapping: Dict[str,Any], 
     results = []
     for idx, item in enumerate(dataset, start=1):
         prompt = item.get("prompt","")
-        headers, req_body = build_request(system["headers"], system["body"], mapping["prompt_paths"], prompt)
+        headers, req_body = build_request(
+            system["headers"],
+            system["body"],
+            mapping.get("prompt_paths", []),
+            prompt,
+            placeholder=mapping.get("input_placeholder", "${input}"),
+            session_id_field=mapping.get("session_id_field"),
+            api_key_name=mapping.get("api_key_name"),
+            api_key_value=mapping.get("api_key_value"),
+        )
         t0 = time.time()
         error = False
         resp_body = None
@@ -56,14 +88,25 @@ def execute_dataset(run_id: str, system: Dict[str,Any], mapping: Dict[str,Any], 
         # extract message
         message = None
         if not error:
-            for rp in mapping["response_paths"]:
-                val = jsonpath_get(resp_body, rp)
-                if val is not None:
-                    message = val
-                    break
-            if message is None:
-                # fallback common keys
-                message = resp_body.get("output") or resp_body.get("message") or resp_body.get("text")
+            # Preferred: use saved extractor function
+            extractor_code = mapping.get("message_extractor")
+            if extractor_code:
+                ns = {}
+                try:
+                    exec(extractor_code, {"__builtins__": {}}, ns)
+                    if "extract_message" in ns and callable(ns["extract_message"]):
+                        message = ns["extract_message"](resp_body)
+                except Exception:
+                    message = None
+            # Fallback: use response_paths or common keys
+            if message in (None, ""):
+                for rp in mapping.get("response_paths", []) or []:
+                    val = jsonpath_get(resp_body, rp)
+                    if val is not None:
+                        message = val
+                        break
+                if message in (None, ""):
+                    message = resp_body.get("output") or resp_body.get("message") or resp_body.get("text")
 
         artifact = {
             "idx": idx,

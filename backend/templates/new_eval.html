@@ -19,17 +19,41 @@
     </select>
 
     <label>Headers JSON</label>
-    <textarea name="headers_json" rows="6">{ "content-type": "application/json", "authorization": "Bearer ..." }</textarea>
+    <textarea name="headers_json" rows="6">{ "content-type": "application/json" }</textarea>
 
     <label>Request Body JSON</label>
-    <textarea name="body_json" rows="12">{ "input": "" }</textarea>
+    <textarea name="body_json" rows="12">{
+  "output_type": "chat",
+  "input_type": "chat",
+  "tweaks": {
+    "ChatInput-tqPPD": {
+      "input_value": "${input}"
+    }
+  }
+}</textarea>
 
     <label>Test Prompt</label>
     <input name="test_prompt" value="Hello" />
+
+    <div style="display:flex; gap: 16px; align-items:center; flex-wrap:wrap; margin-top: 1rem;">
+      <label style="display:flex; align-items:center; gap:6px; margin-top:0;">
+        <input type="checkbox" name="add_api_key" value="1" />
+        Add API key header
+      </label>
+      <input name="api_key_name" placeholder="Header name (e.g., x-api-key)" style="max-width:260px;">
+      <input name="api_key_value" placeholder="Key value" style="max-width:320px;">
+    </div>
+
+    <div style="display:flex; gap: 16px; align-items:center; flex-wrap:wrap; margin-top: .5rem;">
+      <label style="display:flex; align-items:center; gap:6px; margin-top:0;">
+        <input type="checkbox" name="add_session_id" value="1" />
+        Add session_id to body
+      </label>
+      <input name="session_id_field" value="session_id" style="max-width:240px;">
+    </div>
 
     <div style="margin-top:1rem;">
       <button class="btn" type="submit">Detect Mapping & Run Test</button>
     </div>
   </form>
 {% endblock %}
-

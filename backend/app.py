@@ -9,7 +9,7 @@ from .schemas import (
     SUTIn, MappingDetectIn, MappingOut, PlanIn, RunIn, EvaluateIn, RunResultOut,
     DatasetIn, DatasetItemIn, StandardMetricIn, MetricUpdateIn,
 )
-from .mapping_service import detect_mapping
+from .mapping_service import detect_mapping, llm_generate_extractor
 from .executor import execute_dataset
 from .evaluator import evaluate
 from .reporting import export_csv, export_pdf
@@ -40,6 +40,11 @@ def _ensure_columns_sqlite():
             ensure("metrics", "applicability", "TEXT")
             ensure("runs", "mapping_snapshot", "TEXT")
             ensure("runs", "selected_metric_codes", "TEXT")
+            ensure("mappings", "input_placeholder", "VARCHAR")
+            ensure("mappings", "message_extractor", "TEXT")
+            ensure("mappings", "session_id_field", "VARCHAR")
+            ensure("mappings", "api_key_name", "VARCHAR")
+            ensure("mappings", "api_key_value", "VARCHAR")
     except Exception:
         # silent in case of non-SQLite/permissions
         pass
@@ -107,7 +112,12 @@ def ui_new_submit(request: Request,
                   method: str = Form("POST"),
                   headers_json: str = Form("{}"),
                   body_json: str = Form("{}"),
-                  test_prompt: str = Form("Hello")):
+                  test_prompt: str = Form("Hello"),
+                  add_api_key: str | None = Form(None),
+                  api_key_name: str = Form(""),
+                  api_key_value: str = Form(""),
+                  add_session_id: str | None = Form(None),
+                  session_id_field: str = Form("session_id")):
     # Parse JSON
     try:
         headers = json.loads(headers_json or "{}")
@@ -119,9 +129,38 @@ def ui_new_submit(request: Request,
     _sut = SUTIn(system_id=system_id, name=name or system_id, endpoint=endpoint, method=method or "POST", headers=headers, body=body)
     create_or_update_sut(_sut)
 
-    # Mapping detect (persists mapping)
+    # Build test headers/body exactly as provided, plus optional API key and session id
+    headers_final = dict(headers)
+    if add_api_key:
+        if not api_key_name or not api_key_value:
+            return templates.TemplateResponse("new_eval.html", {"request": request, "error": "API key name and value are required when enabled."})
+        headers_final[api_key_name] = api_key_value
+    body_final = json.loads(json.dumps(body))
+    if add_session_id:
+        if isinstance(body_final, dict) and session_id_field:
+            import uuid as _uuid
+            body_final[session_id_field] = str(_uuid.uuid4())
+    # Create a Mapping row now to persist extractor + options
+    # Also attempt heuristic/LLM mapping detection to fill error rules and potential paths
     mdet = MappingDetectIn(system_id=system_id, headers=headers, body=body)
-    mapping_result = mapping_detect(mdet)
+    md = detect_mapping(headers, body)
+    mapping_row = Mapping(
+        system_id=system_id,
+        prompt_paths=json.dumps(md.get("prompt_paths", [])),
+        response_paths=json.dumps(md.get("response_paths", [])),
+        error_rules=json.dumps(md.get("error_rules", {})),
+        created_at=now_iso(),
+        input_placeholder="${input}",
+        session_id_field=session_id_field if add_session_id else None,
+        api_key_name=api_key_name if add_api_key else None,
+        api_key_value=api_key_value if add_api_key else None,
+    )
+    db = SessionLocal()
+    try:
+        db.add(mapping_row)
+        db.commit()
+    finally:
+        db.close()
 
     # Plan inline run (single test prompt)
     run_id = f"ui-{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}"
@@ -136,17 +175,55 @@ def ui_new_submit(request: Request,
     create_plan(plan_payload)
 
     # Execute
-    run_execute(RunIn(run_id=run_id))
+    # Execute with one-off headers/body modifications
+    # Temporarily override the system headers/body for this request by writing to DB, or pass via executor path.
+    # For simplicity here, we update the System headers/body just for execution and then revert.
+    db = SessionLocal()
+    try:
+        sys = db.query(System).filter_by(system_id=system_id).first()
+        original_headers = sys.headers
+        original_body = sys.body
+        sys.headers = json.dumps(headers_final)
+        sys.body = json.dumps(body_final)
+        db.commit()
+        run_execute(RunIn(run_id=run_id))
+        # Restore originals
+        sys.headers = original_headers
+        sys.body = original_body
+        db.commit()
+    finally:
+        db.close()
 
     # Load artifacts for display
     from .evaluator import load_artifacts
     artifacts = load_artifacts(run_id)
+    # Generate and save extractor function based on the first artifact response
+    extractor_code = None
+    if artifacts:
+        extractor_code = llm_generate_extractor(artifacts[0].get("response", {}).get("body", {}))
+        # Save extractor on the latest mapping for the system
+        db = SessionLocal()
+        try:
+            mapping_latest = db.query(Mapping).filter_by(system_id=system_id).order_by(Mapping.id.desc()).first()
+            if mapping_latest:
+                mapping_latest.message_extractor = extractor_code
+                db.commit()
+        finally:
+            db.close()
 
     return templates.TemplateResponse("new_eval_result.html", {
         "request": request,
         "system_id": system_id,
         "run_id": run_id,
-        "mapping": mapping_result,
+        "mapping": {
+            "prompt_paths": md.get("prompt_paths", []),
+            "response_paths": md.get("response_paths", []),
+            "error_rules": md.get("error_rules", {}),
+            "input_placeholder": "${input}",
+            "api_key_name": api_key_name if add_api_key else None,
+            "session_id_field": session_id_field if add_session_id else None,
+            "message_extractor": extractor_code,
+        },
         "artifacts": artifacts,
     })
 
