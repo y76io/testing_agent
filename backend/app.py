@@ -50,35 +50,48 @@ def now_iso():
     return datetime.datetime.utcnow().isoformat()
 
 @app.get("/")
-def root():
-    return {
-        "ok": True,
-        "service": "Testing Agent",
-        "version": "mvp",
-        "docs": "/docs",
-        "endpoints": [
-            "/sut", "/mapping/detect", "/plan", "/run", "/evaluate",
-            "/runs", "/run/{run_id}/results", "/reports/{run_id}/{rtype}",
-            "/datasets", "/datasets/items", "/standards/metrics", "/metrics/update",
-            "/healthz"
-        ],
-    }
-
-@app.get("/healthz")
-def healthz():
-    return {"status": "ok", "time": now_iso()}
-
-
-# ---- Minimal UI ----
-
-@app.get("/ui", response_class=HTMLResponse)
-def ui_index(request: Request):
+def root(request: Request):
+    # Render the UI index for the root path
     db = SessionLocal()
     try:
         runs = db.query(Run).order_by(Run.id.desc()).limit(50).all()
         return templates.TemplateResponse("index.html", {"request": request, "runs": runs})
     finally:
         db.close()
+
+@app.get("/healthz")
+def healthz():
+    return {"status": "ok", "time": now_iso()}
+
+@app.get("/info")
+def info():
+    return {
+        "ok": True,
+        "service": "Testing Agent",
+        "version": "mvp",
+        "ui": "/",
+        "docs": "/docs",
+        "health": "/healthz",
+        "endpoints": {
+            "systems": ["/sut", "/sut/{system_id}"],
+            "mapping": ["/mapping/detect"],
+            "planning": ["/plan"],
+            "execution": ["/run"],
+            "evaluation": ["/evaluate", "/run/{run_id}/results", "/runs"],
+            "reports": ["/reports/{run_id}/csv", "/reports/{run_id}/pdf"],
+            "datasets": ["/datasets", "/datasets/items"],
+            "standards_metrics": ["/standards/metrics", "/metrics/update"],
+        },
+        "notes": "Use the UI at '/' for a streamlined flow or see /docs for the full API.",
+    }
+
+
+# ---- Minimal UI ----
+
+@app.get("/ui", response_class=HTMLResponse)
+def ui_index(request: Request):
+    # Redirect UI index to root for a single entry point
+    return root(request)
 
 
 @app.get("/ui/new", response_class=HTMLResponse)

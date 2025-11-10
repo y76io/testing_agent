@@ -1,6 +1,13 @@
 {% extends 'layout.html' %}
 {% block content %}
-  <h2>Runs</h2>
+  <div style="display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;">
+    <div>
+      <h2 style="margin:0; font-size:20px;">Recent Runs</h2>
+      <p style="margin:.25rem 0 0; color:var(--muted);">Inspect results or start a new evaluation.</p>
+    </div>
+    <a class="btn" href="/ui/new">New Evaluation</a>
+  </div>
+  <div style="height:12px;"></div>
   <table>
     <thead><tr><th>Run ID</th><th>System</th><th>Status</th><th>Overall</th><th>Started</th></tr></thead>
     <tbody>
@@ -13,9 +20,8 @@
         <td>{{ r.started_at }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="5">No runs yet.</td></tr>
+      <tr><td colspan="5">No runs yet. Click “New Evaluation” to begin.</td></tr>
       {% endfor %}
     </tbody>
   </table>
 {% endblock %}
-
