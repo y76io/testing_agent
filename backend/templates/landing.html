@@ -1,0 +1,10 @@
+{% extends 'layout.html' %}
+{% block content %}
+  <h2 style="margin-top:0;">Welcome</h2>
+  <p style="color:var(--muted);">Choose how to proceed.</p>
+  <div style="display:flex; gap:12px; flex-wrap:wrap;">
+    <a class="btn" href="/ui/start">Start New Evaluation</a>
+    <a class="btn secondary" href="/ui/evals">View Previous Full Evaluations</a>
+  </div>
+{% endblock %}
+

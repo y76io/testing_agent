@@ -1,0 +1,27 @@
+{% extends 'layout.html' %}
+{% block content %}
+  <div style="display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;">
+    <div>
+      <h2 style="margin:0; font-size:20px;">Black-Box API Tests</h2>
+      <p style="margin:.25rem 0 0; color:var(--muted);">Create new tests for different agents/models or revisit previous ones.</p>
+    </div>
+    <a class="btn" href="/ui/new">New API Test</a>
+  </div>
+  <div style="height:12px;"></div>
+  <table>
+    <thead><tr><th>Run ID</th><th>System</th><th>Status</th><th>Started</th></tr></thead>
+    <tbody>
+      {% for r in api_runs %}
+      <tr>
+        <td><a href="/ui/run/{{ r.run_id }}">{{ r.run_id }}</a></td>
+        <td>{{ r.system_id }}</td>
+        <td>{{ r.status }}</td>
+        <td>{{ r.started_at }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4">No API tests yet. Click “New API Test” to begin.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}
+

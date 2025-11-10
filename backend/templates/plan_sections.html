@@ -1,0 +1,30 @@
+{% extends 'layout.html' %}
+{% block content %}
+  <h2 style="margin-top:0;">Evaluation Sections — {{ standard_name }}</h2>
+  <p style="color:var(--muted);">Sections grouped by evaluation mode and access. Only Black-Box API is active for now.</p>
+  <div style="display:grid; grid-template-columns: 1fr; gap: 14px;">
+    {% for g in groups %}
+      <div class="card">
+        <h3 style="margin:0 0 6px;">{{ g.evaluation_mode }} — {{ g.access }}</h3>
+        <ul style="margin: 8px 0 0 16px;">
+          {% for it in g['items'][:6] %}
+            <li>{{ it.id }} — {{ it.name }}</li>
+          {% endfor %}
+          {% if g['items']|length > 6 %}
+            <li style="color:var(--muted);">… and {{ g['items']|length - 6 }} more</li>
+          {% endif %}
+        </ul>
+        <div style="margin-top:8px;">
+          {% if 'Black-Box' in g.access %}
+            <a class="btn" href="/ui/api">Open Black-Box API Testing</a>
+          {% else %}
+            <button class="btn secondary" disabled>Coming soon</button>
+          {% endif %}
+        </div>
+      </div>
+    {% else %}
+      <p>No sections selected.</p>
+    {% endfor %}
+  </div>
+{% endblock %}
+

@@ -88,16 +88,7 @@ def _load_metrics_list():
 
 @app.get("/")
 def root(request: Request):
-    # Render the UI index for the root path
-    db = SessionLocal()
-    try:
-        runs = db.query(Run).order_by(Run.id.desc()).limit(50).all()
-        standard = _load_standard_summary()
-        metrics = _load_metrics_list()
-        api_runs = [r for r in runs if (r.mode or '').lower() == 'manual']
-        return templates.TemplateResponse("index.html", {"request": request, "runs": runs, "api_runs": api_runs, "standard": standard, "metrics": metrics})
-    finally:
-        db.close()
+    return templates.TemplateResponse("landing.html", {"request": request})
 
 @app.get("/healthz")
 def healthz():
@@ -130,8 +121,74 @@ def info():
 
 @app.get("/ui", response_class=HTMLResponse)
 def ui_index(request: Request):
-    # Redirect UI index to root for a single entry point
     return root(request)
+
+
+@app.get("/ui/evals", response_class=HTMLResponse)
+def ui_evals(request: Request):
+    # Placeholder: list of full evaluations (non-API/manual). Will be populated later.
+    db = SessionLocal()
+    try:
+        full_runs = db.query(Run).filter((Run.mode == "standard")).order_by(Run.id.desc()).all()
+        return templates.TemplateResponse("evals_list.html", {"request": request, "full_runs": full_runs})
+    finally:
+        db.close()
+
+
+def _load_standard_points():
+    import pathlib
+    p = pathlib.Path("data/ISO_24001.json")
+    if not p.exists():
+        return {"name": "ISO 24001", "points": []}
+    data = json.loads(p.read_text())
+    name = data.get("standard", {}).get("name", "ISO 24001")
+    pts = []
+    for c in data.get("clauses", []) or []:
+        for s in c.get("subclauses", []) or []:
+            pts.append({
+                "id": s.get("id"),
+                "name": s.get("name"),
+                "evaluation_mode": s.get("evaluation_mode"),
+                "access": s.get("access"),
+            })
+    return {"name": name, "points": pts}
+
+
+@app.get("/ui/start", response_class=HTMLResponse)
+def ui_start_eval(request: Request):
+    standard = _load_standard_points()
+    return templates.TemplateResponse("start_eval.html", {"request": request, "standard": standard})
+
+
+@app.post("/ui/start", response_class=HTMLResponse)
+def ui_start_eval_submit(request: Request,
+                         standard_code: str = Form("ISO_24001"),
+                         manual_metrics: str | None = Form(None),
+                         metric: list[str] | None = Form(None)):
+    std = _load_standard_points()
+    all_pts = std["points"]
+    if manual_metrics:
+        selected_ids = set(metric or [])
+        selected = [p for p in all_pts if p["id"] in selected_ids]
+    else:
+        selected = list(all_pts)
+    # group by evaluation_mode + access
+    groups = {}
+    for p in selected:
+        key = (p.get("evaluation_mode", "Unknown"), p.get("access", "Unknown"))
+        groups.setdefault(key, []).append(p)
+    grouped = [{"evaluation_mode": k[0], "access": k[1], "items": v} for k, v in groups.items()]
+    return templates.TemplateResponse("plan_sections.html", {"request": request, "standard_name": std["name"], "groups": grouped})
+
+
+@app.get("/ui/api", response_class=HTMLResponse)
+def ui_api_tests(request: Request):
+    db = SessionLocal()
+    try:
+        api_runs = db.query(Run).filter((Run.mode == "manual")).order_by(Run.id.desc()).all()
+        return templates.TemplateResponse("api_list.html", {"request": request, "api_runs": api_runs})
+    finally:
+        db.close()
 
 
 @app.get("/ui/new", response_class=HTMLResponse)
