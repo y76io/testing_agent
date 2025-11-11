@@ -4,26 +4,28 @@
   <p style="color:var(--muted);">Sections grouped by evaluation mode and access. Only Black-Box API is active for now.</p>
   <div style="display:grid; grid-template-columns: 1fr; gap: 14px;">
     {% for g in groups %}
-      <div class="card">
-        <h3 style="margin:0 0 10px;">{{ g.evaluation_mode }} — {{ g.access }}</h3>
-        <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap:10px;">
-          {% for it in g['items'][:6] %}
-            <div class="card-inner">
-              <div style="font-weight:600;">{{ it.id }} — {{ it.name }}</div>
-            </div>
-          {% endfor %}
-          {% if g['items']|length > 6 %}
-            <div class="card-inner" style="color:var(--muted);">… and {{ g['items']|length - 6 }} more</div>
-          {% endif %}
+    <div class="card">
+      <h3 style="margin:0 0 10px;">{{ g.evaluation_mode }}</h3>
+      <div style="display:grid; grid-template-columns: 1fr; gap: 10px;">
+        {% for ag in g.access_groups %}
+        <div class="card-inner">
+          <div style="font-weight:600; margin-bottom:6px;">{{ ag.access }}</div>
+          <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap:10px;">
+            {% for it in ag.items %}
+              <div class="card-inner" style="background:#0b1a2b;">
+                <div style="font-weight:600;">{{ it.id }} — {{ it.name }}</div>
+                {% if 'Black-Box' in ag.access %}
+                  <div style="margin-top:8px;"><a class="btn" href="/ui/api?eval_id={{ eval_id }}&item_id={{ it.id }}">Open API test for this item</a></div>
+                {% else %}
+                  <div style="margin-top:8px;"><button class="btn secondary" disabled>Coming soon</button></div>
+                {% endif %}
+              </div>
+            {% endfor %}
+          </div>
         </div>
-        <div style="margin-top:12px;">
-          {% if 'Black-Box' in g.access %}
-            <a class="btn" href="/ui/api?eval_id={{ eval_id }}">Open Black-Box API Testing</a>
-          {% else %}
-            <button class="btn secondary" disabled>Coming soon</button>
-          {% endif %}
-        </div>
+        {% endfor %}
       </div>
+    </div>
     {% else %}
       <p>No sections selected.</p>
     {% endfor %}

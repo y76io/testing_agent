@@ -144,18 +144,18 @@ def _load_standard_points():
     data = json.loads(p.read_text())
     name = data.get("standard", {}).get("name", "ISO 24001")
     pts = []
+    def to_list(val):
+        if val is None:
+            return []
+        if isinstance(val, list):
+            return [x.strip() for x in val if x]
+        # split on '+' if present
+        return [x.strip() for x in str(val).split('+') if x.strip()]
+
     for c in data.get("clauses", []) or []:
         for s in c.get("subclauses", []) or []:
-            eval_modes = s.get("evaluation_mode")
-            if isinstance(eval_modes, list):
-                modes = eval_modes
-            else:
-                modes = [eval_modes]
-            accesses = s.get("access")
-            if isinstance(accesses, list):
-                accs = accesses
-            else:
-                accs = [accesses]
+            modes = to_list(s.get("evaluation_mode"))
+            accs = to_list(s.get("access"))
             for em in modes:
                 for ac in accs:
                     pts.append({
@@ -188,12 +188,21 @@ def ui_start_eval_submit(request: Request,
         selected = [p for p in all_pts if p["id"] in selected_ids]
     else:
         selected = list(all_pts)
-    # group by evaluation_mode + access
-    groups = {}
+    # group by evaluation_mode then access
+    groups_by_mode = {}
     for p in selected:
-        key = (p.get("evaluation_mode", "Unknown"), p.get("access", "Unknown"))
-        groups.setdefault(key, []).append(p)
-    grouped = [{"evaluation_mode": k[0], "access": k[1], "items": v} for k, v in groups.items()]
+        em = p.get("evaluation_mode", "Unknown")
+        ac = p.get("access", "Unknown")
+        groups_by_mode.setdefault(em, {})
+        groups_by_mode[em].setdefault(ac, [])
+        groups_by_mode[em][ac].append(p)
+    # Prepare structure for template
+    grouped = []
+    for em, acc_map in groups_by_mode.items():
+        grouped.append({
+            "evaluation_mode": em,
+            "access_groups": [{"access": ac, "items": items} for ac, items in acc_map.items()]
+        })
     return templates.TemplateResponse("plan_sections.html", {"request": request, "standard_name": std["name"], "groups": grouped, "eval_id": eval_id})
 
 
@@ -202,11 +211,15 @@ def ui_api_tests(request: Request):
     db = SessionLocal()
     try:
         eval_id = request.query_params.get('eval_id')
+        item_id = request.query_params.get('item_id')
         q = db.query(Run).filter((Run.mode == "manual"))
         if eval_id:
             q = q.filter(Run.evaluation_id == eval_id)
+        if item_id:
+            # Filter runs by system_id suffix match? For now, show all API runs within eval
+            pass
         api_runs = q.order_by(Run.id.desc()).all()
-        return templates.TemplateResponse("api_list.html", {"request": request, "api_runs": api_runs, "eval_id": eval_id})
+        return templates.TemplateResponse("api_list.html", {"request": request, "api_runs": api_runs, "eval_id": eval_id, "item_id": item_id})
     finally:
         db.close()
 
@@ -214,7 +227,8 @@ def ui_api_tests(request: Request):
 @app.get("/ui/new", response_class=HTMLResponse)
 def ui_new_form(request: Request):
     eval_id = request.query_params.get('eval_id')
-    return templates.TemplateResponse("new_eval.html", {"request": request, "eval_id": eval_id})
+    item_id = request.query_params.get('item_id')
+    return templates.TemplateResponse("new_eval.html", {"request": request, "eval_id": eval_id, "item_id": item_id})
 
 
 @app.post("/ui/new", response_class=HTMLResponse)
@@ -349,6 +363,7 @@ def ui_new_submit(request: Request,
                 except Exception:
                     extracted_preview = ""
 
+    item_id = request.query_params.get('item_id')
     return templates.TemplateResponse("new_eval_result.html", {
         "request": request,
         "system_id": system_id,
@@ -380,8 +395,65 @@ def ui_new_submit(request: Request,
             "add_session_id": bool(add_session_id),
             "session_id_field": session_id_field,
         },
-        "eval_id": eval_id
+        "eval_id": eval_id,
+        "item_id": item_id,
     })
+
+
+@app.post("/ui/api/run_dataset", response_class=HTMLResponse)
+def ui_run_dataset(request: Request,
+                   system_id: str = Form(...),
+                   eval_id: str = Form(...),
+                   item_id: str = Form(...)):
+    # Try to load dataset for this item_id from data/datasets/{item_id}.jsonl
+    import pathlib
+    path = pathlib.Path(f"data/datasets/{item_id}.jsonl")
+    if not path.exists():
+        return templates.TemplateResponse("api_list.html", {"request": request, "api_runs": [], "eval_id": eval_id, "error": f"Dataset not found for item {item_id}: {path}"})
+    # Load into Dataset tables
+    from .schemas import DatasetIn
+    profile = {
+        "dataset_id": item_id,
+        "name": f"Dataset for {item_id}",
+        "description": f"Auto-loaded dataset for {item_id}",
+        "source": "local",
+        "license": "",
+        "profile": {"modalities": ["text"], "languages": ["en"], "domains": [], "tags": [item_id], "has_ground_truth": False, "item_schema": {"prompt":"string"}},
+    }
+    upsert_dataset(DatasetIn(**profile))
+    # Load items
+    with open(path) as f:
+        idx = 0
+        for line in f:
+            line = line.strip()
+            if not line: continue
+            idx += 1
+            upsert_dataset_item(DatasetItemIn(dataset_id=item_id, item_index=idx, payload=json.loads(line), tags=[]))
+    # Create a run for this dataset and execute
+    run_id = f"evalds-{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}"
+    plan_payload = PlanIn(
+        run_id=run_id,
+        system_id=system_id,
+        mode="manual",
+        standard_code=None,
+        metric_codes=[],
+        dataset={"type": "dataset_id", "value": item_id}
+    )
+    create_plan(plan_payload)
+    # attach eval_id
+    db = SessionLocal()
+    try:
+        r = db.query(Run).filter_by(run_id=run_id).first()
+        if r:
+            r.evaluation_id = eval_id
+            db.commit()
+    finally:
+        db.close()
+    run_execute(RunIn(run_id=run_id))
+    # Redirect to API list page
+    return templates.TemplateResponse("api_list.html", {"request": request, "eval_id": eval_id, "api_runs": [
+        {"run_id": run_id, "system_id": system_id, "status": "executed", "started_at": now_iso()}
+    ]})
 
 
 @app.get("/ui/run/{run_id}", response_class=HTMLResponse)
