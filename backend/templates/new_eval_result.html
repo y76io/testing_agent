@@ -75,6 +75,14 @@
     {% if eval_id %}<input type="hidden" name="eval_id" value="{{ eval_id }}" />{% endif %}
     <button class="btn" type="submit">Confirm API</button>
   </form>
+  {% if eval_id and item_id %}
+  <form method="post" action="/ui/api/run_dataset" style="margin-top:1rem; display:inline-block; margin-left:8px;">
+    <input type="hidden" name="system_id" value="{{ system_id }}" />
+    <input type="hidden" name="eval_id" value="{{ eval_id }}" />
+    <input type="hidden" name="item_id" value="{{ item_id }}" />
+    <button class="btn secondary" type="submit">Run dataset for this item</button>
+  </form>
+  {% endif %}
   <details class="expander" style="margin-top: 1rem;">
     <summary>Adjust and Re-run <span class="chev">▶</span></summary>
     <div class="content">

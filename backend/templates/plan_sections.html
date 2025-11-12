@@ -11,7 +11,7 @@
         <div class="card-inner">
           <div style="font-weight:600; margin-bottom:6px;">{{ ag.access }}</div>
           <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap:10px;">
-            {% for it in ag.items %}
+            {% for it in ag['items'] %}
               <div class="card-inner" style="background:#0b1a2b;">
                 <div style="font-weight:600;">{{ it.id }} — {{ it.name }}</div>
                 {% if 'Black-Box' in ag.access %}
