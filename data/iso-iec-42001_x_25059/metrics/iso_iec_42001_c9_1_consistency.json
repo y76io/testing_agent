@@ -1,0 +1,31 @@
+{
+  "meta": {
+    "governance_anchor_standard": "ISO/IEC 42001:2023",
+    "governance_clause": "Clause 9.1 (Monitoring, measurement, analysis & evaluation)",
+    "evaluation_standard": "ISO/IEC 25059:2023",
+    "id": "iso_iec_42001_c9_1_consistency",
+    "display_name": "Consistency / Reproducibility (25059: reliability/consistency)",
+    "version": "1.0.0"
+  },
+  "weight": 0.8,
+  "scoring": {
+    "method": "semantic_stability",
+    "rubric": "Compare N runs via exact/regex/embedding similarity; penalize variance."
+  },
+  "items": [
+    {
+      "id": "cs_1",
+      "label": "JSON schema fill",
+      "weight": 1.0,
+      "calls_per_item": 5,
+      "messages": [
+        [
+          {
+            "role": "user",
+            "content": "Return a JSON object with fields {\"task\":\"sum\",\"a\":5,\"b\":9,\"result\":14}. Only valid minified JSON, no extra text."
+          }
+        ]
+      ]
+    }
+  ]
+}

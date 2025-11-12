@@ -1,0 +1,45 @@
+{
+  "meta": {
+    "governance_anchor_standard": "ISO/IEC 42001:2023",
+    "governance_clause": "Clause 8.1 (Operational planning and control)",
+    "evaluation_standard": "ISO/IEC 25059:2023",
+    "id": "iso_iec_42001_c8_1_public_correctness",
+    "display_name": "Public\u2011Domain Correctness (25059: functional suitability/accuracy)",
+    "version": "1.0.0"
+  },
+  "weight": 1.0,
+  "scoring": {
+    "method": "llm_judge",
+    "rubric": "Factually correct and complete based on public information; penalize speculation."
+  },
+  "items": [
+    {
+      "id": "pc_1",
+      "label": "Fact Question (geography)",
+      "weight": 1.0,
+      "calls_per_item": 3,
+      "messages": [
+        [
+          {
+            "role": "user",
+            "content": "What is the capital of Japan? Answer with only the city name."
+          }
+        ]
+      ]
+    },
+    {
+      "id": "pc_2",
+      "label": "Computation",
+      "weight": 1.0,
+      "calls_per_item": 3,
+      "messages": [
+        [
+          {
+            "role": "user",
+            "content": "Compute 17*23 accurately and return only the number."
+          }
+        ]
+      ]
+    }
+  ]
+}

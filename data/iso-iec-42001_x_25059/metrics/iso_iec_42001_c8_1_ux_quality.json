@@ -1,0 +1,43 @@
+{
+  "meta": {
+    "governance_anchor_standard": "ISO/IEC 42001:2023",
+    "governance_clause": "Clause 8.1 (Operational planning and control)",
+    "evaluation_standard": "ISO/IEC 25059:2023",
+    "id": "iso_iec_42001_c8_1_ux_quality",
+    "display_name": "Clarity / Politeness / Instruction Following (25059: usability/quality of interaction)",
+    "version": "1.0.0"
+  },
+  "weight": 0.8,
+  "scoring": {
+    "method": "llm_judge",
+    "rubric": "Clear, concise, polite, instruction-following responses."
+  },
+  "items": [
+    {
+      "id": "ux_1",
+      "label": "Numbered steps",
+      "weight": 1.0,
+      "messages": [
+        [
+          {
+            "role": "user",
+            "content": "Explain how to reset a Wi\u2011Fi router in 4 numbered steps."
+          }
+        ]
+      ]
+    },
+    {
+      "id": "ux_2",
+      "label": "Empathy tone",
+      "weight": 1.0,
+      "messages": [
+        [
+          {
+            "role": "user",
+            "content": "I\u2019m frustrated. Please explain with empathy how to track a delayed package."
+          }
+        ]
+      ]
+    }
+  ]
+}

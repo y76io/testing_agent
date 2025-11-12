@@ -143,6 +143,10 @@ def _load_standard_points():
         return {"name": "ISO 24001", "points": []}
     data = json.loads(p.read_text())
     name = data.get("standard", {}).get("name", "ISO 24001")
+    # Build evaluation link index id -> {path,title}
+    link_index = {}
+    for lk in data.get("evaluation_links_index", []) or []:
+        link_index[lk.get("id")] = {"path": lk.get("path"), "title": lk.get("title")}
     pts = []
     def to_list(val):
         if val is None:
@@ -155,7 +159,14 @@ def _load_standard_points():
     for c in data.get("clauses", []) or []:
         for s in c.get("subclauses", []) or []:
             modes = to_list(s.get("evaluation_mode"))
+            if not modes:
+                modes = [m for m in (s.get("evaluation_modes") or [])]
             accs = to_list(s.get("access"))
+            eval_links = []
+            for lid in (s.get("evaluation_links") or []):
+                meta = link_index.get(lid)
+                if meta:
+                    eval_links.append({"id": lid, **meta})
             for em in modes:
                 for ac in accs:
                     pts.append({
@@ -163,6 +174,7 @@ def _load_standard_points():
                         "name": s.get("name"),
                         "evaluation_mode": em,
                         "access": ac,
+                        "links": eval_links,
                     })
     return {"name": name, "points": pts}
 
@@ -212,6 +224,7 @@ def ui_api_tests(request: Request):
     try:
         eval_id = request.query_params.get('eval_id')
         item_id = request.query_params.get('item_id')
+        metric_id = request.query_params.get('metric_id')
         q = db.query(Run).filter((Run.mode == "manual"))
         if eval_id:
             q = q.filter(Run.evaluation_id == eval_id)
@@ -219,7 +232,7 @@ def ui_api_tests(request: Request):
             # Filter runs by system_id suffix match? For now, show all API runs within eval
             pass
         api_runs = q.order_by(Run.id.desc()).all()
-        return templates.TemplateResponse("api_list.html", {"request": request, "api_runs": api_runs, "eval_id": eval_id, "item_id": item_id})
+        return templates.TemplateResponse("api_list.html", {"request": request, "api_runs": api_runs, "eval_id": eval_id, "item_id": item_id, "metric_id": metric_id})
     finally:
         db.close()
 
@@ -228,7 +241,8 @@ def ui_api_tests(request: Request):
 def ui_new_form(request: Request):
     eval_id = request.query_params.get('eval_id')
     item_id = request.query_params.get('item_id')
-    return templates.TemplateResponse("new_eval.html", {"request": request, "eval_id": eval_id, "item_id": item_id})
+    metric_id = request.query_params.get('metric_id')
+    return templates.TemplateResponse("new_eval.html", {"request": request, "eval_id": eval_id, "item_id": item_id, "metric_id": metric_id})
 
 
 @app.post("/ui/new", response_class=HTMLResponse)
@@ -364,6 +378,7 @@ def ui_new_submit(request: Request,
                     extracted_preview = ""
 
     item_id = request.query_params.get('item_id')
+    metric_id = request.query_params.get('metric_id')
     return templates.TemplateResponse("new_eval_result.html", {
         "request": request,
         "system_id": system_id,
@@ -397,6 +412,7 @@ def ui_new_submit(request: Request,
         },
         "eval_id": eval_id,
         "item_id": item_id,
+        "metric_id": metric_id,
     })
 
 
@@ -404,17 +420,39 @@ def ui_new_submit(request: Request,
 def ui_run_dataset(request: Request,
                    system_id: str = Form(...),
                    eval_id: str = Form(...),
-                   item_id: str = Form(...)):
+                   item_id: str = Form(...),
+                   metric_id: str = Form(None)):
     # Try to load dataset for this item_id from data/datasets/{item_id}.jsonl
     import pathlib
     path = pathlib.Path(f"data/datasets/{item_id}.jsonl")
+    # If a metric_id is provided or built-in dataset not found, try resolve via ISO_24001.json links
+    metric_dataset = None
     if not path.exists():
-        return templates.TemplateResponse("api_list.html", {"request": request, "api_runs": [], "eval_id": eval_id, "error": f"Dataset not found for item {item_id}: {path}"})
+        # resolve metric json path
+        std = _load_standard_points()
+        # find any point for this item_id (they all share same links)
+        p0 = next((p for p in std["points"] if p["id"] == item_id), None)
+        if p0 and p0.get("links"):
+            # choose the first link if metric_id not provided
+            mid = metric_id or p0["links"][0]["id"]
+            link = next((l for l in p0["links"] if l["id"] == mid), None)
+            if link:
+                metric_path = pathlib.Path("data") / "iso-iec-42001_x_25059" / link["path"].split("/")[-2] / link["path"].split("/")[-1] if "/" in link["path"] else pathlib.Path("data") / link["path"]
+                if not metric_path.exists():
+                    metric_path = pathlib.Path("data") / link["path"]
+                if metric_path.exists():
+                    try:
+                        metric_dataset = json.loads(metric_path.read_text())
+                    except Exception:
+                        metric_dataset = None
+        if not metric_dataset:
+            return templates.TemplateResponse("api_list.html", {"request": request, "api_runs": [], "eval_id": eval_id, "error": f"Dataset not found for item {item_id} and metric {metric_id or ''}"})
     # Load into Dataset tables
     from .schemas import DatasetIn
+    dsid = metric_id or item_id
     profile = {
-        "dataset_id": item_id,
-        "name": f"Dataset for {item_id}",
+        "dataset_id": dsid,
+        "name": f"Dataset for {dsid}",
         "description": f"Auto-loaded dataset for {item_id}",
         "source": "local",
         "license": "",
@@ -422,13 +460,23 @@ def ui_run_dataset(request: Request,
     }
     upsert_dataset(DatasetIn(**profile))
     # Load items
-    with open(path) as f:
-        idx = 0
-        for line in f:
-            line = line.strip()
-            if not line: continue
-            idx += 1
-            upsert_dataset_item(DatasetItemIn(dataset_id=item_id, item_index=idx, payload=json.loads(line), tags=[]))
+    idx = 0
+    if path.exists():
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line: continue
+                idx += 1
+                upsert_dataset_item(DatasetItemIn(dataset_id=dsid, item_index=idx, payload=json.loads(line), tags=[]))
+    else:
+        # Build from metric JSON messages
+        for it in (metric_dataset.get("items") or []):
+            # for each messages set, use last user message as prompt
+            for convo in (it.get("messages") or []):
+                user_msgs = [m.get("content", "") for m in convo if m.get("role") == "user"]
+                prompt = user_msgs[-1] if user_msgs else (convo[-1].get("content") if convo else "")
+                idx += 1
+                upsert_dataset_item(DatasetItemIn(dataset_id=dsid, item_index=idx, payload={"prompt": prompt}, tags=[item_id]))
     # Create a run for this dataset and execute
     run_id = f"evalds-{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}"
     plan_payload = PlanIn(
@@ -437,7 +485,7 @@ def ui_run_dataset(request: Request,
         mode="manual",
         standard_code=None,
         metric_codes=[],
-        dataset={"type": "dataset_id", "value": item_id}
+        dataset={"type": "dataset_id", "value": dsid}
     )
     create_plan(plan_payload)
     # attach eval_id
