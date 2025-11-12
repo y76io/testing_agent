@@ -1,0 +1,15 @@
+{% extends 'layout.html' %}
+{% block content %}
+  <h2 style="margin:0;">Evidence-Based Evaluation</h2>
+  <p style="color:var(--muted);">Mode: {{ mode }} — Access: {{ access }}</p>
+  <div class="card-inner">
+    <p>This evaluation mode requires uploaded/static evidence. We will add document upload and checklist evaluation here.</p>
+    <p><strong>Context</strong></p>
+    <ul>
+      <li>Evaluation ID: {{ eval_id }}</li>
+      <li>Item ID: {{ item_id }}</li>
+      <li>Metric Link: {{ metric_id or 'n/a' }}</li>
+    </ul>
+  </div>
+{% endblock %}
+

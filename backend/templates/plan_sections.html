@@ -15,16 +15,12 @@
               <div class="card-inner" style="background:#0b1a2b;">
                 <div style="font-weight:600;">{{ it.id }} — {{ it.name }}</div>
                 {% set first_link = (it.links[0].id if it.links and it.links|length > 0 else None) %}
-                {% if 'Black-Box' in ag.access %}
-                  <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
-                    <a class="btn" href="/ui/api?eval_id={{ eval_id }}&item_id={{ it.id }}{% if first_link %}&metric_id={{ first_link }}{% endif %}">Open API test for this item</a>
-                    {% if it.links and it.links|length > 0 %}
-                      <span style="color:var(--muted);">Links: {{ it.links|length }}</span>
-                    {% endif %}
-                  </div>
-                {% else %}
-                  <div style="margin-top:8px;"><button class="btn secondary" disabled>Coming soon</button></div>
-                {% endif %}
+                <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
+                  <a class="btn" href="/ui/eval?eval_id={{ eval_id }}&item_id={{ it.id }}&mode={{ g.evaluation_mode }}&access={{ ag.access }}{% if first_link %}&metric_id={{ first_link }}{% endif %}">Open {{ g.evaluation_mode }} — {{ ag.access }}</a>
+                  {% if it.links and it.links|length > 0 %}
+                    <span style="color:var(--muted);">Links: {{ it.links|length }}</span>
+                  {% endif %}
+                </div>
               </div>
             {% endfor %}
           </div>

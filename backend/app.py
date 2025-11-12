@@ -1,6 +1,6 @@
 import os, json, datetime
 from fastapi import FastAPI, HTTPException, UploadFile, File, Body, Request, Form
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 from .db import Base, engine, SessionLocal
@@ -414,6 +414,48 @@ def ui_new_submit(request: Request,
         "item_id": item_id,
         "metric_id": metric_id,
     })
+
+
+def _route_for_mode_access(mode: str, access: str) -> str:
+    mode = (mode or "").lower()
+    access = (access or "").lower()
+    if "system-level" in mode and "black-box" in access:
+        return "/ui/api"
+    if "evidence-based" in mode:
+        return "/ui/evidence"
+    if "organizational-judgment" in mode or "people" in mode:
+        return "/ui/org"
+    return "/ui/evidence"  # default placeholder
+
+
+@app.get("/ui/eval")
+def ui_eval_router(request: Request, eval_id: str, item_id: str, mode: str, access: str, metric_id: str | None = None):
+    base = _route_for_mode_access(mode, access)
+    # Preserve all params
+    q = f"eval_id={eval_id}&item_id={item_id}&mode={mode}&access={access}"
+    if metric_id:
+        q += f"&metric_id={metric_id}"
+    return RedirectResponse(url=f"{base}?{q}")
+
+
+@app.get("/ui/evidence", response_class=HTMLResponse)
+def ui_evidence(request: Request):
+    eval_id = request.query_params.get('eval_id')
+    item_id = request.query_params.get('item_id')
+    metric_id = request.query_params.get('metric_id')
+    mode = request.query_params.get('mode')
+    access = request.query_params.get('access')
+    return templates.TemplateResponse("evidence_placeholder.html", {"request": request, "eval_id": eval_id, "item_id": item_id, "metric_id": metric_id, "mode": mode, "access": access})
+
+
+@app.get("/ui/org", response_class=HTMLResponse)
+def ui_org(request: Request):
+    eval_id = request.query_params.get('eval_id')
+    item_id = request.query_params.get('item_id')
+    metric_id = request.query_params.get('metric_id')
+    mode = request.query_params.get('mode')
+    access = request.query_params.get('access')
+    return templates.TemplateResponse("org_placeholder.html", {"request": request, "eval_id": eval_id, "item_id": item_id, "metric_id": metric_id, "mode": mode, "access": access})
 
 
 @app.post("/ui/api/run_dataset", response_class=HTMLResponse)
