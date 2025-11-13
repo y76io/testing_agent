@@ -27,6 +27,12 @@
           {% for r in analysis.advice %}<li>{{ r }}</li>{% endfor %}
         </ul>
       {% endif %}
+      {% if analysis.clarification %}
+        <div class="card-inner" style="margin-top:8px;">
+          <strong>LLM clarification</strong>
+          <p style="margin:.25rem 0 0;">{{ analysis.clarification }}</p>
+        </div>
+      {% endif %}
     {% else %}
       <h3>Extracted Message</h3>
       <pre style="white-space:pre-wrap;">{{ extracted_preview or a.response.message_extracted or '' }}</pre>
@@ -36,6 +42,21 @@
           <div class="content"><pre class="code">{{ mapping.message_extractor }}</pre></div>
         </details>
       {% endif %}
+      <details class="expander" style="margin-top:8px;">
+        <summary>Edit extractor function <span class="chev">▶</span></summary>
+        <div class="content">
+          <form method="post" action="/ui/save_extractor">
+            <input type="hidden" name="system_id" value="{{ system_id }}" />
+            <input type="hidden" name="run_id" value="{{ run_id }}" />
+            {% if eval_id %}<input type="hidden" name="eval_id" value="{{ eval_id }}" />{% endif %}
+            {% if item_id %}<input type="hidden" name="item_id" value="{{ item_id }}" />{% endif %}
+            {% if metric_id %}<input type="hidden" name="metric_id" value="{{ metric_id }}" />{% endif %}
+            <label>Extractor code (Python)</label>
+            <textarea name="extractor_code" rows="10">{{ mapping.message_extractor or 'def extract_message(resp):\n    return ""' }}</textarea>
+            <div style="margin-top:.5rem;"><button class="btn" type="submit">Save extractor</button></div>
+          </form>
+        </div>
+      </details>
     {% endif %}
 
     <details class="expander">
@@ -73,6 +94,8 @@
   <form method="get" action="/ui/configure" style="margin-top:1rem; display:inline-block;">
     <input type="hidden" name="system_id" value="{{ system_id }}"/>
     {% if eval_id %}<input type="hidden" name="eval_id" value="{{ eval_id }}" />{% endif %}
+    {% if item_id %}<input type="hidden" name="item_id" value="{{ item_id }}" />{% endif %}
+    {% if metric_id %}<input type="hidden" name="metric_id" value="{{ metric_id }}" />{% endif %}
     <button class="btn" type="submit">Confirm API</button>
   </form>
   {% if eval_id and item_id %}

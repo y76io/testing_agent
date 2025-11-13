@@ -9,7 +9,7 @@ from .schemas import (
     SUTIn, MappingDetectIn, MappingOut, PlanIn, RunIn, EvaluateIn, RunResultOut,
     DatasetIn, DatasetItemIn, StandardMetricIn, MetricUpdateIn,
 )
-from .mapping_service import detect_mapping, llm_generate_extractor, llm_analyze_error
+from .mapping_service import detect_mapping, llm_generate_extractor, llm_analyze_error, llm_clarify_error
 from .executor import execute_dataset
 from .evaluator import evaluate
 from .reporting import export_csv, export_pdf
@@ -376,6 +376,10 @@ def ui_new_submit(request: Request,
                         extracted_preview = ns["extract_message"](first.get("response", {}).get("body", {})) or ""
                 except Exception:
                     extracted_preview = ""
+        else:
+            # Ask LLM to clarify the error for the user
+            error_clarification = llm_clarify_error(first.get("response", {}).get("status", 0), first.get("response", {}).get("body", {}), first.get("request", {}).get("body", {}))
+            analysis["clarification"] = error_clarification
 
     item_id = request.query_params.get('item_id')
     metric_id = request.query_params.get('metric_id')
@@ -728,8 +732,61 @@ def ui_run_detail(request: Request, run_id: str):
 
 @app.get("/ui/configure", response_class=HTMLResponse)
 def ui_configure(request: Request, system_id: str | None = None):
-    # Placeholder page for selecting standards/metrics after confirming API
-    return templates.TemplateResponse("configure.html", {"request": request, "system_id": system_id})
+    eval_id = request.query_params.get('eval_id')
+    item_id = request.query_params.get('item_id')
+    metric_id = request.query_params.get('metric_id')
+    return templates.TemplateResponse("configure.html", {"request": request, "system_id": system_id, "eval_id": eval_id, "item_id": item_id, "metric_id": metric_id})
+
+
+@app.post("/ui/save_extractor", response_class=HTMLResponse)
+def ui_save_extractor(request: Request,
+                      system_id: str = Form(...),
+                      run_id: str = Form(...),
+                      extractor_code: str = Form(...),
+                      eval_id: str | None = Form(None),
+                      item_id: str | None = Form(None),
+                      metric_id: str | None = Form(None)):
+    # Save extractor on latest mapping for system
+    db = SessionLocal()
+    try:
+        mapping_latest = db.query(Mapping).filter_by(system_id=system_id).order_by(Mapping.id.desc()).first()
+        if mapping_latest:
+            mapping_latest.message_extractor = extractor_code
+            db.commit()
+    finally:
+        db.close()
+    # Reload artifacts and recompute preview
+    from .evaluator import load_artifacts
+    artifacts = load_artifacts(run_id)
+    extracted_preview = ""
+    if artifacts:
+        first = artifacts[0]
+        ns = {}
+        try:
+            exec(extractor_code, {"__builtins__": {}}, ns)
+            if "extract_message" in ns and callable(ns["extract_message"]):
+                extracted_preview = ns["extract_message"](first.get("response", {}).get("body", {})) or ""
+        except Exception:
+            extracted_preview = ""
+    return templates.TemplateResponse("new_eval_result.html", {
+        "request": request,
+        "system_id": system_id,
+        "run_id": run_id,
+        "mapping": {
+            "prompt_paths": [],
+            "response_paths": [],
+            "error_rules": {},
+            "input_placeholder": "${input}",
+            "message_extractor": extractor_code,
+        },
+        "artifacts": artifacts,
+        "analysis": {"is_error": False, "reasons": [], "advice": []},
+        "extracted_preview": extracted_preview,
+        "prev": {"system_id": system_id, "name": "", "endpoint": "", "method": "POST", "headers_json": "{}", "body_json": "{}", "test_prompt": "", "add_api_key": False, "api_key_name": "", "api_key_value": "", "add_session_id": False, "session_id_field": "session_id"},
+        "eval_id": eval_id,
+        "item_id": item_id,
+        "metric_id": metric_id,
+    })
 
 @app.post("/sut")
 def create_or_update_sut(payload: SUTIn):

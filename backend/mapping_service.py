@@ -204,3 +204,27 @@ Only output JSON.
         }
     except Exception:
         return baseline
+
+
+def llm_clarify_error(status: int, resp_body: Dict[str, Any], req_body: Dict[str, Any] | None = None) -> str:
+    try:
+        client = GeminiClient()
+    except Exception:
+        client = None
+    if not client:
+        return "The response indicates an error. Verify headers, auth, and request schema."
+    prompt = f"""
+You are an API assistant. The HTTP status is {status}. Explain to the user succinctly what seems wrong with their request and what to fix (e.g., header names/values, required fields), based on the response JSON below.
+
+Request JSON (if available):
+{json.dumps(req_body or {}, indent=2)}
+
+Response JSON:
+{json.dumps(resp_body, indent=2)}
+
+Return a short paragraph.
+"""
+    try:
+        return client.complete(prompt).strip()
+    except Exception:
+        return "The response indicates an error. Verify headers, auth, and request schema."

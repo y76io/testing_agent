@@ -1,8 +1,16 @@
 {% extends 'layout.html' %}
 {% block content %}
-  <h2>Configure Evaluation</h2>
-  <p style="color:var(--muted);">Next, select standards and metrics to evaluate. (Coming soon.)</p>
+  <h2 style="margin-top:0;">Configure Evaluation</h2>
   {% if system_id %}<p><strong>System:</strong> {{ system_id }}</p>{% endif %}
-  <p><a class="btn secondary" href="/">Back to Home</a></p>
+  <div class="card-inner">
+    <p>Proceed to run the selected metric’s conversations and collect scores.</p>
+    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+      {% if eval_id and item_id and metric_id and system_id %}
+        <a class="btn" href="/ui/metric_runner?eval_id={{ eval_id }}&item_id={{ item_id }}&metric_id={{ metric_id }}&system_id={{ system_id }}">Run evaluation for this metric</a>
+      {% else %}
+        <button class="btn secondary" disabled>Metric context missing</button>
+      {% endif %}
+      <a class="btn secondary" href="/">Back to Home</a>
+    </div>
+  </div>
 {% endblock %}
-
