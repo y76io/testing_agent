@@ -17,6 +17,9 @@
                 {% set first_link = (it.links[0].id if it.links and it.links|length > 0 else None) %}
                 <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
                   <a class="btn" href="/ui/eval?eval_id={{ eval_id }}&item_id={{ it.id }}&mode={{ g.evaluation_mode }}&access={{ ag.access }}{% if first_link %}&metric_id={{ first_link }}{% endif %}">Open {{ g.evaluation_mode }} — {{ ag.access }}</a>
+                  {% if not first_link %}
+                  <a class="btn secondary" href="/ui/choose_metric?eval_id={{ eval_id }}&item_id={{ it.id }}&mode={{ g.evaluation_mode }}&access={{ ag.access }}">Choose metric</a>
+                  {% endif %}
                   {% if it.links and it.links|length > 0 %}
                     <span style="color:var(--muted);">Links: {{ it.links|length }}</span>
                   {% endif %}

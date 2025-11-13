@@ -242,6 +242,13 @@ def ui_new_form(request: Request):
     eval_id = request.query_params.get('eval_id')
     item_id = request.query_params.get('item_id')
     metric_id = request.query_params.get('metric_id')
+    mode = request.query_params.get('mode')
+    access = request.query_params.get('access')
+    if not metric_id and eval_id and item_id:
+        q = f"eval_id={eval_id}&item_id={item_id}"
+        if mode: q += f"&mode={mode}"
+        if access: q += f"&access={access}"
+        return RedirectResponse(url=f"/ui/choose_metric?{q}")
     return templates.TemplateResponse("new_eval.html", {"request": request, "eval_id": eval_id, "item_id": item_id, "metric_id": metric_id})
 
 
@@ -439,6 +446,8 @@ def ui_eval_router(request: Request, eval_id: str, item_id: str, mode: str, acce
     q = f"eval_id={eval_id}&item_id={item_id}&mode={mode}&access={access}"
     if metric_id:
         q += f"&metric_id={metric_id}"
+    if not metric_id:
+        return RedirectResponse(url=f"/ui/choose_metric?{q}")
     return RedirectResponse(url=f"{base}?{q}")
 
 
@@ -735,6 +744,15 @@ def ui_configure(request: Request, system_id: str | None = None):
     eval_id = request.query_params.get('eval_id')
     item_id = request.query_params.get('item_id')
     metric_id = request.query_params.get('metric_id')
+    mode = request.query_params.get('mode')
+    access = request.query_params.get('access')
+    if not (eval_id and item_id and metric_id):
+        q = []
+        if eval_id: q.append(f"eval_id={eval_id}")
+        if item_id: q.append(f"item_id={item_id}")
+        if mode: q.append(f"mode={mode}")
+        if access: q.append(f"access={access}")
+        return RedirectResponse(url=f"/ui/choose_metric?{'&'.join(q)}")
     return templates.TemplateResponse("configure.html", {"request": request, "system_id": system_id, "eval_id": eval_id, "item_id": item_id, "metric_id": metric_id})
 
 

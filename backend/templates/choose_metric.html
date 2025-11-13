@@ -1,0 +1,18 @@
+{% extends 'layout.html' %}
+{% block content %}
+  <h2 style="margin-top:0;">Choose Metric</h2>
+  <p style="color:var(--muted);">Item: {{ item_id }} — Mode: {{ mode }} — Access: {{ access }}</p>
+  <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap:12px;">
+    {% for ln in links %}
+      <div class="card-inner">
+        <div style="font-weight:600;">{{ ln.title or ln.id }}</div>
+        <div style="margin-top:8px;">
+          <a class="btn" href="/ui/eval?eval_id={{ eval_id }}&item_id={{ item_id }}&mode={{ mode }}&access={{ access }}&metric_id={{ ln.id }}">Use this metric</a>
+        </div>
+      </div>
+    {% else %}
+      <p>No metric links available for this item.</p>
+    {% endfor %}
+  </div>
+{% endblock %}
+
