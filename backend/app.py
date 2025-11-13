@@ -458,6 +458,174 @@ def ui_org(request: Request):
     return templates.TemplateResponse("org_placeholder.html", {"request": request, "eval_id": eval_id, "item_id": item_id, "metric_id": metric_id, "mode": mode, "access": access})
 
 
+def _resolve_metric_path(metric_id: str):
+    std = _load_standard_points()
+    for p in std["points"]:
+        for ln in p.get("links", []) or []:
+            if ln.get("id") == metric_id:
+                # Build absolute path under data/
+                import pathlib
+                base = pathlib.Path("data")
+                path = ln.get("path")
+                full = base / path
+                return str(full)
+    return None
+
+
+@app.get("/ui/metric_runner", response_class=HTMLResponse)
+def ui_metric_runner(request: Request):
+    eval_id = request.query_params.get('eval_id')
+    item_id = request.query_params.get('item_id')
+    metric_id = request.query_params.get('metric_id')
+    system_id = request.query_params.get('system_id') or ''
+    # Load metric name
+    metric_name = None
+    mpath = _resolve_metric_path(metric_id) if metric_id else None
+    if mpath:
+        try:
+            spec = json.loads(open(mpath).read())
+            metric_name = spec.get('meta', {}).get('display_name')
+        except Exception:
+            metric_name = None
+    return templates.TemplateResponse("metric_runner.html", {"request": request, "eval_id": eval_id, "item_id": item_id, "metric_id": metric_id, "system_id": system_id, "metric_name": metric_name})
+
+
+@app.post("/ui/metric_runner", response_class=HTMLResponse)
+def ui_metric_runner_post(request: Request,
+                          eval_id: str = Form(...),
+                          item_id: str = Form(...),
+                          metric_id: str = Form(...),
+                          system_id: str = Form(...),
+                          run_mode: str = Form("regular"),
+                          custom_reps: int = Form(3)):
+    # Load metric spec
+    mpath = _resolve_metric_path(metric_id)
+    if not mpath:
+        raise HTTPException(400, "Unknown metric")
+    try:
+        spec = json.loads(open(mpath).read())
+    except Exception as e:
+        raise HTTPException(400, f"Failed to load metric: {e}")
+
+    # Build dataset of conversations
+    items = []
+    default_calls = spec.get('defaults', {}).get('calls_per_item') or None
+    for it in spec.get('items', []) or []:
+        reps = it.get('calls_per_item', default_calls) or 1
+        if run_mode == 'test':
+            reps = 1
+        elif run_mode == 'custom':
+            reps = max(1, int(custom_reps or 1))
+        for _ in range(reps):
+            for convo in (it.get('messages') or []):
+                # Convert to conversation list of dicts
+                conv = []
+                for msg in convo:
+                    conv.append({"role": msg.get("role"), "content": msg.get("content")})
+                items.append({"conversation": conv})
+
+    # Execute as one run
+    run_id = f"metric-{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}"
+    # Ensure mapping exists
+    db = SessionLocal()
+    try:
+        mapping = db.query(Mapping).filter_by(system_id=system_id).order_by(Mapping.id.desc()).first()
+        if not mapping:
+            raise HTTPException(400, "No mapping found for system")
+        sys = db.query(System).filter_by(system_id=system_id).first()
+    finally:
+        db.close()
+    system = {
+        "endpoint": sys.endpoint,
+        "method": sys.method,
+        "headers": json.loads(sys.headers or "{}"),
+        "body": json.loads(sys.body or "{}")
+    }
+    mapping_obj = {
+        "prompt_paths": json.loads(mapping.prompt_paths or "[]"),
+        "response_paths": json.loads(mapping.response_paths or "[]"),
+        "error_rules": json.loads(mapping.error_rules or "{}"),
+        "input_placeholder": mapping.input_placeholder or "${input}",
+        "session_id_field": mapping.session_id_field,
+        "api_key_name": mapping.api_key_name,
+        "api_key_value": mapping.api_key_value,
+        "message_extractor": mapping.message_extractor,
+    }
+
+    # Save dataset transiently and execute
+    execute_dataset(run_id, system, mapping_obj, items)
+
+    # Evaluate per conversation
+    from .evaluator import load_artifacts
+    artifacts = load_artifacts(run_id)
+    per_conv = []
+    method = spec.get('scoring', {}).get('method')
+    mean = 0.0
+    failed = []
+    if method == 'latency_ms':
+        budget = spec.get('scoring', {}).get('budget_ms', 4000)
+        scores = []
+        for a in artifacts:
+            lat = a.get('latency_ms') or 0
+            # 1.0 at <= budget; linear down to 0 at 3x budget
+            if lat <= budget:
+                s = 1.0
+            elif lat >= 3*budget:
+                s = 0.0
+            else:
+                s = max(0.0, 1.0 - (lat - budget)/(2*budget))
+            scores.append(s)
+            ok = lat <= budget
+            per_conv.append({"idx": a.get('idx'), "score": s, "pass": ok})
+            if not ok:
+                failed.append(a.get('idx'))
+        mean = sum(scores)/len(scores) if scores else 0.0
+    else:
+        # LLM judge on conversation transcript
+        from .clients.gemini_client import GeminiClient
+        rubric = spec.get('scoring', {}).get('rubric', 'Score 0..1 based on quality.')
+        try:
+            client = GeminiClient()
+        except Exception:
+            client = None
+        scores = []
+        for a in artifacts:
+            convo = a.get('conversation') or []
+            transcript = "\n".join([f"{m.get('role')}: {m.get('content')}" for m in convo])
+            prompt = f"{rubric}\n\nConversation transcript:\n{transcript}\n\nReturn only a number between 0 and 1."
+            val = 0.0
+            if client:
+                try:
+                    txt = client.complete(prompt).strip()
+                    val = float(txt)
+                except Exception:
+                    val = 0.0
+            scores.append(val)
+            ok = val >= 0.8
+            per_conv.append({"idx": a.get('idx'), "score": val, "pass": ok})
+            if not ok:
+                failed.append(a.get('idx'))
+        mean = sum(scores)/len(scores) if scores else 0.0
+
+    summary = {"count": len(per_conv), "mean": mean, "failed_count": len(failed)}
+    # Persist MetricResult
+    db = SessionLocal()
+    try:
+        mr = MetricResult(run_id=run_id, metric_code=metric_id, result=json.dumps({"per_conversation": per_conv, "summary": summary}), passed=1 if not failed else 0)
+        db.add(mr)
+        # also tag run with evaluation_id
+        r = db.query(Run).filter_by(run_id=run_id).first()
+        if r:
+            r.evaluation_id = eval_id
+            r.status = "evaluated"
+            r.overall_score = mean
+        db.commit()
+    finally:
+        db.close()
+
+    return templates.TemplateResponse("metric_run_result.html", {"request": request, "run_id": run_id, "metric_id": metric_id, "per_conversation": per_conv, "summary": summary})
+
+
 @app.post("/ui/api/run_dataset", response_class=HTMLResponse)
 def ui_run_dataset(request: Request,
                    system_id: str = Form(...),

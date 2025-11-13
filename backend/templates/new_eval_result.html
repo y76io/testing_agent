@@ -82,6 +82,15 @@
     <input type="hidden" name="item_id" value="{{ item_id }}" />
     <button class="btn secondary" type="submit">Run dataset for this item</button>
   </form>
+  {% if metric_id %}
+  <form method="get" action="/ui/metric_runner" style="margin-top:1rem; display:inline-block; margin-left:8px;">
+    <input type="hidden" name="system_id" value="{{ system_id }}" />
+    <input type="hidden" name="eval_id" value="{{ eval_id }}" />
+    <input type="hidden" name="item_id" value="{{ item_id }}" />
+    <input type="hidden" name="metric_id" value="{{ metric_id }}" />
+    <button class="btn" type="submit">Run full evaluation for this metric</button>
+  </form>
+  {% endif %}
   {% endif %}
   <details class="expander" style="margin-top: 1rem;">
     <summary>Adjust and Re-run <span class="chev">▶</span></summary>

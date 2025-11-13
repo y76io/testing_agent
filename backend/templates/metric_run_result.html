@@ -1,0 +1,25 @@
+{% extends 'layout.html' %}
+{% block content %}
+  <h2 style="margin:0;">Metric Evaluation Results</h2>
+  <p style="color:var(--muted);">Run: {{ run_id }} — Metric: {{ metric_id }}</p>
+  <div class="card-inner">
+    <p><strong>Conversations:</strong> {{ summary.count }} — <strong>Mean score:</strong> {{ '%.3f'|format(summary.mean or 0.0) }} — <strong>Failures:</strong> {{ summary.failed_count }}</p>
+  </div>
+  <div style="height:10px;"></div>
+  <div class="card-inner">
+    <h3 style="margin:0 0 8px;">Per-conversation</h3>
+    <table>
+      <thead><tr><th>#</th><th>Score</th><th>Pass</th></tr></thead>
+      <tbody>
+        {% for row in per_conversation %}
+        <tr>
+          <td>{{ row.idx }}</td>
+          <td>{{ '%.3f'|format(row.score or 0.0) }}</td>
+          <td>{{ row.pass }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}
+

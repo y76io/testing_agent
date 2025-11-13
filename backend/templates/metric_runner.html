@@ -1,0 +1,24 @@
+{% extends 'layout.html' %}
+{% block content %}
+  <h2 style="margin:0;">Run Metric Evaluation</h2>
+  <p style="color:var(--muted);">Eval ID: {{ eval_id }} — Item: {{ item_id }} — Metric: {{ metric_id }}</p>
+  {% if metric_name %}<p><strong>Metric:</strong> {{ metric_name }}</p>{% endif %}
+  <form method="post" action="/ui/metric_runner" onsubmit="showLoading()">
+    <input type="hidden" name="eval_id" value="{{ eval_id }}" />
+    <input type="hidden" name="item_id" value="{{ item_id }}" />
+    <input type="hidden" name="metric_id" value="{{ metric_id }}" />
+    <input type="hidden" name="system_id" value="{{ system_id }}" />
+    <label>Run mode</label>
+    <select name="run_mode">
+      <option value="test">Test (few reps)</option>
+      <option value="regular" selected>Regular (defaults)</option>
+      <option value="custom">Custom reps</option>
+    </select>
+    <label>Custom repetitions per item (if custom)</label>
+    <input name="custom_reps" type="number" min="1" value="3" />
+    <div style="margin-top:1rem;">
+      <button class="btn" type="submit">Start Run</button>
+    </div>
+  </form>
+{% endblock %}
+
