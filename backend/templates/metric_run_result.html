@@ -9,13 +9,21 @@
   <div class="card-inner">
     <h3 style="margin:0 0 8px;">Per-conversation</h3>
     <table>
-      <thead><tr><th>#</th><th>Score</th><th>Pass</th></tr></thead>
+      <thead><tr><th>#</th><th>Score</th><th>Pass</th><th>Reason</th><th>How to improve</th></tr></thead>
       <tbody>
         {% for row in per_conversation %}
         <tr>
           <td>{{ row.idx }}</td>
           <td>{{ '%.3f'|format(row.score or 0.0) }}</td>
           <td>{{ row.pass }}</td>
+          <td style="max-width:420px; white-space:normal;">{{ row.explanation or '' }}</td>
+          <td style="max-width:420px; white-space:normal;">
+            {% if row.improvements and row.improvements|length %}
+              <ul style="margin:.25rem 0 0 1rem;">
+                {% for s in row.improvements %}<li>{{ s }}</li>{% endfor %}
+              </ul>
+            {% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>

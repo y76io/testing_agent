@@ -823,21 +823,29 @@ def ui_document_post(request: Request,
         client = None
     score = 0.0
     explanation = ""
+    improvements: list[str] = []
     if client:
-        prompt = f"""
-You are scoring a document against the following metric.
-Metric name: {metric_name or metric_id}
-Rubric/instructions: {rubric or 'Score quality and completeness.'}
-
-Document:
-"""
-        prompt += doc_text
-        prompt += "\n\nReturn ONLY JSON: {\"score\": <0..1>, \"explanation\": \"...\"}."
+        # Include all guidance for faithful judging and actionable feedback
+        ev = _get_evaluation(metric_id) or {}
+        docs_req = ev.get('documents_requested') or []
+        how = ev.get('how_to_evaluate')
+        pc = ev.get('pass_criteria')
+        prompt = (
+            "You are judging a document against a compliance metric.\n" \
+            f"Metric: {metric_name or metric_id}\n" \
+            f"Rubric: {rubric or 'Score quality and completeness.'}\n" \
+            + (f"How to evaluate: {how}\n" if how else "") \
+            + (f"Pass criteria: {pc}\n" if pc else "") \
+            + ("Documents requested: " + "; ".join(docs_req) + "\n" if docs_req else "") \
+            + "\nDocument to judge:\n" + (doc_text or "") +
+            "\n\nReturn ONLY JSON with keys: score (0..1 float), explanation (string), improvement_suggestions (array of short strings)."
+        )
         try:
             txt = client.complete(prompt).strip()
             data = json.loads(txt)
             score = float(data.get('score', 0.0))
             explanation = data.get('explanation', '')
+            improvements = data.get('improvement_suggestions') or []
         except Exception:
             score = 0.0
             explanation = ""
@@ -847,13 +855,13 @@ Document:
     try:
         r = Run(run_id=run_id, system_id="", mode="standard", dataset_ref="{}", started_at=now_iso(), status="evaluated", evaluation_id=eval_id, overall_score=score, metric_spec_path=mpath)
         db.add(r)
-        mr = MetricResult(run_id=run_id, metric_code=metric_id, result=json.dumps({"score": score, "explanation": explanation}), passed=1 if score >= 0.8 else 0)
+        mr = MetricResult(run_id=run_id, metric_code=metric_id, result=json.dumps({"score": score, "explanation": explanation, "improvement_suggestions": improvements}), passed=1 if score >= 0.8 else 0)
         db.add(mr)
         db.commit()
     finally:
         db.close()
     _update_evaluation_summary(eval_id)
-    return templates.TemplateResponse("metric_run_result.html", {"request": request, "run_id": run_id, "metric_id": metric_id, "per_conversation": [{"idx": 1, "score": score, "pass": score >= 0.8}], "summary": {"count": 1, "mean": score, "failed_count": 0 if score >= 0.8 else 1}, "eval_id": eval_id})
+    return templates.TemplateResponse("metric_run_result.html", {"request": request, "run_id": run_id, "metric_id": metric_id, "per_conversation": [{"idx": 1, "score": score, "pass": score >= 0.8, "explanation": explanation, "improvements": improvements}], "summary": {"count": 1, "mean": score, "failed_count": 0 if score >= 0.8 else 1}, "eval_id": eval_id})
 
 
 @app.get("/ui/conversation", response_class=HTMLResponse)
@@ -863,16 +871,13 @@ def ui_conversation_get(request: Request):
     metric_id = request.query_params.get('metric_id')
     if eval_id and metric_id:
         _ensure_in_progress(eval_id, metric_id)
-    # Load metric prompts/questions
-    mpath = _resolve_metric_path(metric_id)
+    # Prefer embedded interview prompts
+    ev = _get_evaluation(metric_id)
     questions = []
     try:
-        spec = json.loads(open(mpath).read()) if mpath else {}
-        for it in (spec.get('items') or []):
-            for convo in (it.get('messages') or []):
-                for msg in convo:
-                    if msg.get('role') == 'user':
-                        questions.append(msg.get('content'))
+        for q in (ev.get('interview_prompts') or []):
+            if isinstance(q, str):
+                questions.append(q)
     except Exception:
         pass
     # Render a simple input form with questions
@@ -888,12 +893,14 @@ def ui_conversation_post(request: Request,
                          item_id: str = Form(...),
                          metric_id: str = Form(...),
                          **answers):
-    # Build transcript
+    # Build transcript using embedded interview prompts in order
+    ev = _get_evaluation(metric_id) or {}
+    prompts = [q for q in (ev.get('interview_prompts') or []) if isinstance(q, str)]
     transcript = []
-    for k, v in answers.items():
-        if k.startswith('q'):
-            transcript.append({"role": "user", "content": k})
-            transcript.append({"role": "assistant", "content": v})
+    for i, q in enumerate(prompts[:10], start=1):
+        ans = answers.get(f'q{i}', '')
+        transcript.append({"role": "user", "content": q})
+        transcript.append({"role": "assistant", "content": ans})
     # Score via LLM rubric
     mpath = _resolve_metric_path(metric_id)
     rubric = None
@@ -917,12 +924,26 @@ def ui_conversation_post(request: Request,
     except Exception:
         client = None
     score = 0.0
+    explanation = ""
+    improvements: list[str] = []
     if client:
         text = "\n".join([f"{m['role']}: {m['content']}" for m in transcript])
-        prompt = f"{rubric or 'Score 0..1 based on quality.'}\n\nTranscript:\n{text}\n\nReturn only a number between 0 and 1."
+        how = ev.get('how_to_evaluate') if ev else None
+        pc = ev.get('pass_criteria') if ev else None
+        prompt = (
+            "You are judging an interview-based evaluation of a process.\n" \
+            f"Rubric: {rubric or 'Score 0..1 based on quality.'}\n" \
+            + (f"How to evaluate: {how}\n" if how else "") \
+            + (f"Pass criteria: {pc}\n" if pc else "") \
+            + "\nTranscript (user=interviewer, assistant=respondent):\n" + text +
+            "\n\nReturn ONLY JSON with keys: score (0..1 float), explanation (string), improvement_suggestions (array of short strings)."
+        )
         try:
             resp = client.complete(prompt).strip()
-            score = float(resp)
+            data = json.loads(resp)
+            score = float(data.get('score', 0.0))
+            explanation = data.get('explanation', '')
+            improvements = data.get('improvement_suggestions') or []
         except Exception:
             score = 0.0
     # Persist minimal result
@@ -931,13 +952,13 @@ def ui_conversation_post(request: Request,
     try:
         r = Run(run_id=run_id, system_id="", mode="standard", dataset_ref="{}", started_at=now_iso(), status="evaluated", evaluation_id=eval_id, overall_score=score, metric_spec_path=mpath)
         db.add(r)
-        mr = MetricResult(run_id=run_id, metric_code=metric_id, result=json.dumps({"score": score}), passed=1 if score >= 0.8 else 0)
+        mr = MetricResult(run_id=run_id, metric_code=metric_id, result=json.dumps({"score": score, "explanation": explanation, "improvement_suggestions": improvements}), passed=1 if score >= 0.8 else 0)
         db.add(mr)
         db.commit()
     finally:
         db.close()
     _update_evaluation_summary(eval_id)
-    return templates.TemplateResponse("metric_run_result.html", {"request": request, "run_id": run_id, "metric_id": metric_id, "per_conversation": [{"idx": 1, "score": score, "pass": score >= 0.8}], "summary": {"count": 1, "mean": score, "failed_count": 0 if score >= 0.8 else 1}, "eval_id": eval_id})
+    return templates.TemplateResponse("metric_run_result.html", {"request": request, "run_id": run_id, "metric_id": metric_id, "per_conversation": [{"idx": 1, "score": score, "pass": score >= 0.8, "explanation": explanation, "improvements": improvements}], "summary": {"count": 1, "mean": score, "failed_count": 0 if score >= 0.8 else 1}, "eval_id": eval_id})
 
 
 def _resolve_metric_path(metric_id: str):
@@ -1134,7 +1155,10 @@ def ui_metric_runner_post(request: Request,
                 s = max(0.0, 1.0 - (lat - budget)/(2*budget))
             scores.append(s)
             ok = lat <= budget
-            per_conv.append({"idx": a.get('idx'), "score": s, "pass": ok})
+            # Provide a short explanation and suggestion
+            exp = f"Observed latency {lat} ms vs budget {budget} ms."
+            sug = "Reduce response time (optimize model/config) or adjust budget if justified."
+            per_conv.append({"idx": a.get('idx'), "score": s, "pass": ok, "explanation": exp, "improvements": [sug]})
             if not ok:
                 failed.append(a.get('idx'))
         mean = sum(scores)/len(scores) if scores else 0.0
@@ -1143,6 +1167,9 @@ def ui_metric_runner_post(request: Request,
         from .clients.gemini_client import GeminiClient
         if not rubric:
             rubric = (spec.get('scoring', {}) or {}).get('rubric', 'Score 0..1 based on quality.')
+        pc = None
+        if ev:
+            pc = (ev.get('scoring') or {}).get('pass_criteria') or ev.get('pass_criteria')
         try:
             client = GeminiClient()
         except Exception:
@@ -1151,17 +1178,28 @@ def ui_metric_runner_post(request: Request,
         for a in artifacts:
             convo = a.get('conversation') or []
             transcript = "\n".join([f"{m.get('role')}: {m.get('content')}" for m in convo])
-            prompt = f"{rubric}\n\nConversation transcript:\n{transcript}\n\nReturn only a number between 0 and 1."
+            prompt = (
+                "You are judging an API-based conversation.\n" \
+                f"Rubric: {rubric}\n" \
+                + (f"Pass criteria: {pc}\n" if pc else "") \
+                + "\nConversation transcript:\n" + transcript +
+                "\n\nReturn ONLY JSON with keys: score (0..1 float), explanation (string), improvement_suggestions (array of short strings)."
+            )
             val = 0.0
+            exp = ""
+            imps: list[str] = []
             if client:
                 try:
                     txt = client.complete(prompt).strip()
-                    val = float(txt)
+                    data = json.loads(txt)
+                    val = float(data.get('score', 0.0))
+                    exp = data.get('explanation', '')
+                    imps = data.get('improvement_suggestions') or []
                 except Exception:
                     val = 0.0
             scores.append(val)
             ok = val >= 0.8
-            per_conv.append({"idx": a.get('idx'), "score": val, "pass": ok})
+            per_conv.append({"idx": a.get('idx'), "score": val, "pass": ok, "explanation": exp, "improvements": imps})
             if not ok:
                 failed.append(a.get('idx'))
         mean = sum(scores)/len(scores) if scores else 0.0
