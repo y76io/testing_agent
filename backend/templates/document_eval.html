@@ -2,6 +2,22 @@
 {% block content %}
   <h2 style="margin-top:0;">Document Analysis</h2>
   <p style="color:var(--muted);">Eval: {{ eval_id }} — Item: {{ item_id }} — Metric: {{ metric_id }}</p>
+  <div class="card-inner">
+    {% if documents_requested and documents_requested|length %}
+      <div><strong>Documents requested</strong></div>
+      <ul style="margin:.25rem 0 .5rem 1rem;">
+        {% for d in documents_requested %}<li>{{ d }}</li>{% endfor %}
+      </ul>
+    {% endif %}
+    {% if how_to_evaluate %}
+      <div style="margin-top:6px;"><strong>How to evaluate</strong></div>
+      <p style="margin:.25rem 0 0; color:var(--muted);">{{ how_to_evaluate }}</p>
+    {% endif %}
+    {% if pass_criteria %}
+      <div style="margin-top:6px;"><strong>Pass criteria</strong></div>
+      <p style="margin:.25rem 0 0; color:var(--muted);">{{ pass_criteria }}</p>
+    {% endif %}
+  </div>
   <form method="post" action="/ui/document" onsubmit="showLoading()">
     <input type="hidden" name="eval_id" value="{{ eval_id }}" />
     <input type="hidden" name="item_id" value="{{ item_id }}" />

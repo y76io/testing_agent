@@ -2,6 +2,16 @@
 {% block content %}
   <h2 style="margin-top:0;">Conversation Evaluation</h2>
   <p style="color:var(--muted);">Eval: {{ eval_id }} — Item: {{ item_id }} — Metric: {{ metric_id }}</p>
+  <div class="card-inner">
+    {% if how_to_evaluate %}
+      <div style="margin-top:0;"><strong>How to evaluate</strong></div>
+      <p style="margin:.25rem 0 0; color:var(--muted);">{{ how_to_evaluate }}</p>
+    {% endif %}
+    {% if pass_criteria %}
+      <div style="margin-top:6px;"><strong>Pass criteria</strong></div>
+      <p style="margin:.25rem 0 0; color:var(--muted);">{{ pass_criteria }}</p>
+    {% endif %}
+  </div>
   {% if fields and fields|length %}
   <form method="post" action="/ui/conversation" onsubmit="showLoading()">
     <input type="hidden" name="eval_id" value="{{ eval_id }}" />

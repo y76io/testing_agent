@@ -3,6 +3,36 @@
   <h2 style="margin:0;">Run Metric Evaluation</h2>
   <p style="color:var(--muted);">Eval ID: {{ eval_id }} — Item: {{ item_id }} — Metric: {{ metric_id }}</p>
   {% if metric_name %}<p><strong>Metric:</strong> {{ metric_name }}</p>{% endif %}
+  {% if eval_meta %}
+  <div class="card-inner">
+    <div style="display:flex; gap:12px; flex-wrap:wrap;">
+      {% if eval_meta.type %}<span><strong>Type:</strong> {{ eval_meta.type }}</span>{% endif %}
+      {% if eval_meta.access %}<span><strong>Access:</strong> {{ eval_meta.access }}</span>{% endif %}
+      {% if eval_meta.runs_per_message %}<span><strong>Runs/message:</strong> {{ eval_meta.runs_per_message }}</span>{% endif %}
+    </div>
+    {% if eval_meta.scoring_method or eval_meta.pass_criteria %}
+      <div style="margin-top:6px;">
+        {% if eval_meta.scoring_method %}<div><strong>Scoring:</strong> {{ eval_meta.scoring_method }}</div>{% endif %}
+        {% if eval_meta.pass_criteria %}<div><strong>Pass criteria:</strong> {{ eval_meta.pass_criteria }}</div>{% endif %}
+      </div>
+    {% endif %}
+    {% if eval_meta.rubric %}
+      <div style="margin-top:6px;"><strong>Rubric</strong>
+        <p style="margin:.25rem 0 0; color:var(--muted);">{{ eval_meta.rubric }}</p>
+      </div>
+    {% endif %}
+    {% if eval_meta.messages and eval_meta.messages|length %}
+      <div style="margin-top:8px;">
+        <div><strong>Sample messages</strong></div>
+        <ul style="margin:.25rem 0 0 1rem;">
+          {% for convo in eval_meta.messages[:2] %}
+            <li>{{ (convo[0].role|default('user')) }}: {{ (convo[0].content|default('')) }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+  </div>
+  {% endif %}
   <form method="post" action="/ui/metric_runner" onsubmit="showLoading()">
     <input type="hidden" name="eval_id" value="{{ eval_id }}" />
     <input type="hidden" name="item_id" value="{{ item_id }}" />

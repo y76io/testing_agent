@@ -778,9 +778,14 @@ def ui_document_get(request: Request):
     eval_id = request.query_params.get('eval_id')
     item_id = request.query_params.get('item_id')
     metric_id = request.query_params.get('metric_id')
+    # Load evaluation details from embedded spec
+    ev = _get_evaluation(metric_id)
+    docs_req = (ev or {}).get('documents_requested') or []
+    how = (ev or {}).get('how_to_evaluate')
+    pc = (ev or {}).get('pass_criteria')
     if eval_id and metric_id:
         _ensure_in_progress(eval_id, metric_id)
-    return templates.TemplateResponse("document_eval.html", {"request": request, "eval_id": eval_id, "item_id": item_id, "metric_id": metric_id})
+    return templates.TemplateResponse("document_eval.html", {"request": request, "eval_id": eval_id, "item_id": item_id, "metric_id": metric_id, "documents_requested": docs_req, "how_to_evaluate": how, "pass_criteria": pc})
 
 
 @app.post("/ui/document", response_class=HTMLResponse)
@@ -969,10 +974,23 @@ def ui_metric_runner(request: Request):
             metric_name = spec.get('meta', {}).get('display_name')
         except Exception:
             metric_name = None
+    # Prepare evaluation metadata for display
+    eval_meta = None
+    if ev:
+        scr = ev.get('scoring') or {}
+        eval_meta = {
+            'type': ev.get('type'),
+            'access': ev.get('access'),
+            'runs_per_message': ev.get('runs_per_message'),
+            'messages': ev.get('messages') or [],
+            'scoring_method': scr.get('method'),
+            'pass_criteria': scr.get('pass_criteria'),
+            'rubric': scr.get('rubric'),
+        }
     # Mark as in-progress when landing on the test page
     if eval_id and metric_id:
         _ensure_in_progress(eval_id, metric_id)
-    return templates.TemplateResponse("metric_runner.html", {"request": request, "eval_id": eval_id, "item_id": item_id, "metric_id": metric_id, "system_id": system_id, "metric_name": metric_name})
+    return templates.TemplateResponse("metric_runner.html", {"request": request, "eval_id": eval_id, "item_id": item_id, "metric_id": metric_id, "system_id": system_id, "metric_name": metric_name, "eval_meta": eval_meta})
 
 
 @app.post("/ui/metric_runner", response_class=HTMLResponse)
