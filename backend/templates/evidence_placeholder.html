@@ -11,5 +11,9 @@
       <li>Metric Link: {{ metric_id or 'n/a' }}</li>
     </ul>
   </div>
+  {% if eval_id %}
+  <div style="margin-top:12px; text-align:right;">
+    <a class="btn secondary" href="/ui/plan?eval_id={{ eval_id }}">Main evaluation</a>
+  </div>
+  {% endif %}
 {% endblock %}
-

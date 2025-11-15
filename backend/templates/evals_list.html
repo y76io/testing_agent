@@ -3,12 +3,11 @@
   <h2 style="margin-top:0;">Previous Full Evaluations</h2>
   <p style="color:var(--muted);">Full evaluations across all selected sections will appear here.</p>
   <table>
-    <thead><tr><th>Run ID</th><th>System</th><th>Status</th><th>Overall</th><th>Started</th></tr></thead>
+    <thead><tr><th>Evaluation</th><th>Status</th><th>Overall</th><th>Started</th></tr></thead>
     <tbody>
       {% for r in full_runs %}
       <tr>
-        <td><a href="/ui/run/{{ r.run_id }}">{{ r.run_id }}</a></td>
-        <td>{{ r.system_id }}</td>
+        <td><a href="/ui/plan?eval_id={{ r.run_id }}">{{ r.run_id }}</a></td>
         <td>{{ r.status }}</td>
         <td>{{ '%.3f'|format(r.overall_score or 0.0) }}</td>
         <td>{{ r.started_at }}</td>
@@ -19,4 +18,3 @@
     </tbody>
   </table>
 {% endblock %}
-

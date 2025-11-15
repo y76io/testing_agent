@@ -67,6 +67,7 @@ class Run(Base):
     overall_score = Column(Float)
     mapping_snapshot = Column(Text, nullable=True)
     selected_metric_codes = Column(Text, nullable=True)   # JSON array string
+    metric_spec_path = Column(Text, nullable=True)        # path to metric JSON used
 
 class Artifact(Base):
     __tablename__ = "artifacts"

@@ -1,0 +1,20 @@
+{% extends 'layout.html' %}
+{% block content %}
+  <h2 style="margin-top:0;">Document Analysis</h2>
+  <p style="color:var(--muted);">Eval: {{ eval_id }} — Item: {{ item_id }} — Metric: {{ metric_id }}</p>
+  <form method="post" action="/ui/document" onsubmit="showLoading()">
+    <input type="hidden" name="eval_id" value="{{ eval_id }}" />
+    <input type="hidden" name="item_id" value="{{ item_id }}" />
+    <input type="hidden" name="metric_id" value="{{ metric_id }}" />
+    <label>Paste document text</label>
+    <textarea name="doc_text" rows="12" placeholder="Paste the policy/procedure text here."></textarea>
+    <div style="margin-top:1rem;">
+      <button class="btn" type="submit">Analyze</button>
+    </div>
+  </form>
+  {% if eval_id %}
+  <div style="margin-top:12px; text-align:right;">
+    <a class="btn secondary" href="/ui/plan?eval_id={{ eval_id }}">Main evaluation</a>
+  </div>
+  {% endif %}
+{% endblock %}

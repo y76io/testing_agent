@@ -1,11 +1,11 @@
 {% extends 'layout.html' %}
 {% block content %}
   <h2 style="margin-top:0;">Evaluation Sections — {{ standard_name }}</h2>
-  <p style="color:var(--muted);">Sections grouped by evaluation mode and access. Only Black-Box API is active for now.</p>
+  <p style="color:var(--muted);">Sections grouped by evaluation type (Interview, API evals, Document analysis), with access as secondary.</p>
   <div style="display:grid; grid-template-columns: 1fr; gap: 14px;">
     {% for g in groups %}
     <div class="card">
-      <h3 style="margin:0 0 10px;">{{ g.evaluation_mode }}</h3>
+      <h3 style="margin:0 0 10px;">{{ g.evaluation_type }}</h3>
       <div style="display:grid; grid-template-columns: 1fr; gap: 10px;">
         {% for ag in g.access_groups %}
         <div class="card-inner">
@@ -14,16 +14,29 @@
             {% for it in ag['items'] %}
               <div class="card-inner" style="background:#0b1a2b;">
                 <div style="font-weight:600;">{{ it.id }} — {{ it.name }}</div>
-                {% set first_link = (it.links[0].id if it.links and it.links|length > 0 else None) %}
-                <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
-                  <a class="btn" href="/ui/eval?eval_id={{ eval_id }}&item_id={{ it.id }}&mode={{ g.evaluation_mode }}&access={{ ag.access }}{% if first_link %}&metric_id={{ first_link }}{% endif %}">Open {{ g.evaluation_mode }} — {{ ag.access }}</a>
-                  {% if not first_link %}
-                  <a class="btn secondary" href="/ui/choose_metric?eval_id={{ eval_id }}&item_id={{ it.id }}&mode={{ g.evaluation_mode }}&access={{ ag.access }}">Choose metric</a>
-                  {% endif %}
-                  {% if it.links and it.links|length > 0 %}
-                    <span style="color:var(--muted);">Links: {{ it.links|length }}</span>
-                  {% endif %}
-                </div>
+                {% if it.evals and it.evals|length > 0 %}
+                  <div style="margin-top:8px; display:grid; grid-template-columns: 1fr; gap:8px;">
+                    {% for ln in it.evals %}
+                      <div class="card-inner" style="background:#0d2338;">
+                        {% set mid = ln.eval_id or ln.id %}
+                        {% set st = (status_map[mid] if status_map and mid in status_map else 'not_tried') %}
+                        {% set color = '#3b82f6' %}
+                        {% if st == 'passed' %}{% set color = '#10b981' %}{% elif st == 'failed' %}{% set color = '#ef4444' %}{% elif st == 'in_progress' %}{% set color = '#f59e0b' %}{% endif %}
+                        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+                          <div style="font-weight:500;">{{ ln.title or mid }}</div>
+                          <span style="font-size:12px; color: {{ color }}; border:1px solid {{ color }}; padding:2px 6px; border-radius: 999px; text-transform: capitalize;">{{ st.replace('_',' ') }}</span>
+                        </div>
+                        <div style="margin-top:6px;">
+                          <a class="btn" href="/ui/eval?eval_id={{ eval_id }}&item_id={{ it.id }}&metric_id={{ mid }}">Open {{ g.evaluation_type }}</a>
+                        </div>
+                      </div>
+                    {% endfor %}
+                  </div>
+                {% else %}
+                  <div style="margin-top:8px;">
+                    <a class="btn secondary" href="/ui/choose_metric?eval_id={{ eval_id }}&item_id={{ it.id }}">Choose metric</a>
+                  </div>
+                {% endif %}
               </div>
             {% endfor %}
           </div>
@@ -35,4 +48,9 @@
       <p>No sections selected.</p>
     {% endfor %}
   </div>
+  {% if eval_id %}
+  <div style="margin-top: 12px; text-align:right;">
+    <a class="btn secondary" href="/ui/plan?eval_id={{ eval_id }}">Main evaluation</a>
+  </div>
+  {% endif %}
 {% endblock %}

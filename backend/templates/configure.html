@@ -11,6 +11,9 @@
         <button class="btn secondary" disabled>Metric context missing</button>
       {% endif %}
       <a class="btn secondary" href="/">Back to Home</a>
+      {% if eval_id %}
+      <a class="btn secondary" href="/ui/plan?eval_id={{ eval_id }}">Main evaluation</a>
+      {% endif %}
     </div>
   </div>
 {% endblock %}

@@ -5,14 +5,18 @@
   <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap:12px;">
     {% for ln in links %}
       <div class="card-inner">
-        <div style="font-weight:600;">{{ ln.title or ln.id }}</div>
+        <div style="font-weight:600;">{{ ln.title or ln.eval_id }}</div>
         <div style="margin-top:8px;">
-          <a class="btn" href="/ui/eval?eval_id={{ eval_id }}&item_id={{ item_id }}&mode={{ mode }}&access={{ access }}&metric_id={{ ln.id }}">Use this metric</a>
+          <a class="btn" href="/ui/eval?eval_id={{ eval_id }}&item_id={{ item_id }}&mode={{ mode }}&access={{ access }}&metric_id={{ ln.eval_id or ln.id }}">Use this metric</a>
         </div>
       </div>
     {% else %}
       <p>No metric links available for this item.</p>
     {% endfor %}
   </div>
+  {% if eval_id %}
+  <div style="margin-top:12px; text-align:right;">
+    <a class="btn secondary" href="/ui/plan?eval_id={{ eval_id }}">Main evaluation</a>
+  </div>
+  {% endif %}
 {% endblock %}
-

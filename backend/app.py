@@ -41,6 +41,7 @@ def _ensure_columns_sqlite():
             ensure("runs", "mapping_snapshot", "TEXT")
             ensure("runs", "selected_metric_codes", "TEXT")
             ensure("runs", "evaluation_id", "VARCHAR")
+            ensure("runs", "metric_spec_path", "TEXT")
             ensure("mappings", "input_placeholder", "VARCHAR")
             ensure("mappings", "message_extractor", "TEXT")
             ensure("mappings", "session_id_field", "VARCHAR")
@@ -55,6 +56,67 @@ _ensure_columns_sqlite()
 def now_iso():
     return datetime.datetime.utcnow().isoformat()
 
+def _update_evaluation_summary(eval_id: str):
+    if not eval_id:
+        return
+    db = SessionLocal()
+    try:
+        parent = db.query(Run).filter_by(run_id=eval_id).first()
+        if not parent:
+            return
+        # Selected metrics
+        try:
+            selected = json.loads(parent.selected_metric_codes or "[]")
+        except Exception:
+            selected = []
+        total = len(selected) if selected else 0
+        # Results for this evaluation
+        q = db.query(MetricResult, Run).join(Run, Run.run_id == MetricResult.run_id).filter(Run.evaluation_id == eval_id)
+        results = q.all()
+        attempted = {mr.metric_code for mr, r in results}
+        passed = {mr.metric_code for mr, r in results if getattr(mr, 'passed', 0)}
+        parent.overall_score = (len(passed) / total) if total else 0.0
+        if not attempted:
+            parent.status = "planned"
+        elif total and len(attempted) >= total:
+            parent.status = "evaluated"
+        else:
+            parent.status = "in_progress"
+        db.commit()
+    finally:
+        db.close()
+
+def _ensure_in_progress(eval_id: str, metric_id: str):
+    """Ensure there is a Run row marking this metric as in-progress within the evaluation.
+    We create a lightweight Run if none exists with status != evaluated.
+    """
+    if not eval_id or not metric_id:
+        return
+    mpath = _resolve_metric_path(metric_id)
+    db = SessionLocal()
+    try:
+        existing = db.query(Run).filter(
+            (Run.evaluation_id == eval_id) & (Run.metric_spec_path == mpath) & (Run.status != "evaluated")
+        ).first()
+        if not existing:
+            rid = f"prog-{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}"
+            run = Run(
+                run_id=rid,
+                system_id="",
+                mode="standard",
+                standard_code="ISO_24001",
+                dataset_ref=json.dumps({}),
+                selected_metric_codes=json.dumps([metric_id]),
+                started_at=now_iso(),
+                status="running",
+                evaluation_id=eval_id,
+                metric_spec_path=mpath,
+            )
+            db.add(run)
+            db.commit()
+    finally:
+        db.close()
+
 def _load_standard_summary():
     import pathlib
     p = pathlib.Path("data/ISO_24001.json")
@@ -62,18 +124,31 @@ def _load_standard_summary():
         return {"name": "ISO 24001", "groups": []}
     data = json.loads(p.read_text())
     name = data.get("standard", {}).get("name", "ISO 24001")
-    clauses = data.get("clauses", [])
+    # Support either legacy "clauses" or current "sections" key
+    sections = data.get("clauses", []) or data.get("sections", [])
     groups = {}
-    for c in clauses:
+    # Group by evaluation type and access derived from evaluations within each subclause
+    for c in sections:
         for s in c.get("subclauses", []) or []:
-            em = s.get("evaluation_mode", "Unknown")
-            ac = s.get("access", "Unknown")
-            key = (em, ac)
-            groups.setdefault(key, []).append({
-                "id": s.get("id"),
-                "name": s.get("name"),
-                "methods": s.get("methods", [])
-            })
+            evals = s.get("evaluations", []) or []
+            # If no explicit evaluations, maintain a generic bucket
+            if not evals:
+                key = ("Unknown", "Unknown")
+                groups.setdefault(key, []).append({
+                    "id": s.get("id"),
+                    "name": s.get("name"),
+                    "methods": s.get("methods", [])
+                })
+                continue
+            for ev in evals:
+                em = (ev.get("type") or "").strip() or "Unknown"
+                ac = ev.get("access") or "Unknown"
+                key = (em, ac)
+                groups.setdefault(key, []).append({
+                    "id": s.get("id"),
+                    "name": s.get("name"),
+                    "methods": s.get("methods", [])
+                })
     out = []
     for (em, ac), items in groups.items():
         out.append({"evaluation_mode": em, "access": ac, "items": items})
@@ -127,10 +202,10 @@ def ui_index(request: Request):
 
 @app.get("/ui/evals", response_class=HTMLResponse)
 def ui_evals(request: Request):
-    # Placeholder: list of full evaluations (non-API/manual). Will be populated later.
+    # Show parent evaluation runs (run_id starts with 'eval-')
     db = SessionLocal()
     try:
-        full_runs = db.query(Run).filter((Run.mode == "standard")).order_by(Run.id.desc()).all()
+        full_runs = db.query(Run).filter((Run.mode == "standard") & (Run.run_id.like("eval-%"))).order_by(Run.id.desc()).all()
         return templates.TemplateResponse("evals_list.html", {"request": request, "full_runs": full_runs})
     finally:
         db.close()
@@ -143,40 +218,107 @@ def _load_standard_points():
         return {"name": "ISO 24001", "points": []}
     data = json.loads(p.read_text())
     name = data.get("standard", {}).get("name", "ISO 24001")
-    # Build evaluation link index id -> {path,title}
+    # Legacy link index (kept for back-compat)
     link_index = {}
     for lk in data.get("evaluation_links_index", []) or []:
-        link_index[lk.get("id")] = {"path": lk.get("path"), "title": lk.get("title")}
+        link_index[lk.get("id")] = {"path": lk.get("path"), "title": lk.get("title"), "type": lk.get("type")}
     pts = []
-    def to_list(val):
-        if val is None:
-            return []
-        if isinstance(val, list):
-            return [x.strip() for x in val if x]
-        # split on '+' if present
-        return [x.strip() for x in str(val).split('+') if x.strip()]
 
-    for c in data.get("clauses", []) or []:
+    # Support either legacy "clauses" or current "sections" key
+    for c in (data.get("clauses", []) or data.get("sections", []) or []):
         for s in c.get("subclauses", []) or []:
-            modes = to_list(s.get("evaluation_mode"))
-            if not modes:
-                modes = [m for m in (s.get("evaluation_modes") or [])]
-            accs = to_list(s.get("access"))
-            eval_links = []
-            for lid in (s.get("evaluation_links") or []):
-                meta = link_index.get(lid)
-                if meta:
-                    eval_links.append({"id": lid, **meta})
-            for em in modes:
-                for ac in accs:
-                    pts.append({
-                        "id": s.get("id"),
-                        "name": s.get("name"),
-                        "evaluation_mode": em,
-                        "access": ac,
-                        "links": eval_links,
-                    })
+            # Build evaluations list using evaluation-level type/access
+            evals_all = []
+            for ev in (s.get("evaluations") or []):
+                evals_all.append({
+                    "eval_id": ev.get("eval_id") or ev.get("id"),
+                    "title": ev.get("eval_name") or ev.get("title") or (ev.get("eval_id") or ev.get("id")),
+                    "type": (ev.get("type") or "").strip(),
+                    "access": ev.get("access") or "Any",
+                })
+            # Legacy links fallback
+            if not evals_all and s.get("evaluation_links"):
+                for lid in (s.get("evaluation_links") or []):
+                    meta = link_index.get(lid)
+                    if meta:
+                        evals_all.append({
+                            "eval_id": lid,
+                            "title": meta.get("title"),
+                            "type": (meta.get("type") or ""),
+                            "path": meta.get("path"),
+                            "access": "Any",
+                        })
+            # If none, create a generic point
+            if not evals_all:
+                pts.append({
+                    "id": s.get("id"),
+                    "name": s.get("name"),
+                    "evaluation_mode": "Any",
+                    "access": "Any",
+                    "evals": [],
+                })
+                continue
+            # Group by (type, access) to reflect new schema
+            group_map = {}
+            for ev in evals_all:
+                key = (ev.get("type") or "Any", ev.get("access") or "Any")
+                group_map.setdefault(key, []).append(ev)
+            for (em, ac), subset in group_map.items():
+                pts.append({
+                    "id": s.get("id"),
+                    "name": s.get("name"),
+                    "evaluation_mode": em,
+                    "access": ac,
+                    "evals": subset,
+                })
     return {"name": name, "points": pts}
+
+
+def _get_evaluation(eval_id: str):
+    import pathlib
+    p = pathlib.Path("data/ISO_24001.json")
+    if not p.exists():
+        return None
+    data = json.loads(p.read_text())
+    # Support either legacy "clauses" or current "sections" key
+    for c in (data.get("clauses", []) or data.get("sections", []) or []):
+        for s in c.get("subclauses", []) or []:
+            for ev in (s.get("evaluations") or []):
+                if ev.get("eval_id") == eval_id or ev.get("id") == eval_id:
+                    out = dict(ev)
+                    out["subclause_id"] = s.get("id")
+                    out["subclause_name"] = s.get("name")
+                    return out
+    return None
+
+
+def _resolve_metric_meta(metric_id: str):
+    ev = _get_evaluation(metric_id)
+    if ev:
+        return {"id": metric_id, "title": ev.get("eval_name") or ev.get("title") or metric_id, "path": f"data/ISO_24001.json#{metric_id}", "type": ev.get("type")}
+    return None
+
+
+def _collect_item_links(item_id: str):
+    std = _load_standard_points()
+    seen = {}
+    for p in std["points"]:
+        if p.get("id") == item_id:
+            for ln in (p.get("evals") or []):
+                mid = ln.get("eval_id") or ln.get("id")
+                if mid and mid not in seen:
+                    seen[mid] = ln
+    return list(seen.values())
+
+
+@app.get("/ui/choose_metric", response_class=HTMLResponse)
+def ui_choose_metric(request: Request):
+    eval_id = request.query_params.get('eval_id')
+    item_id = request.query_params.get('item_id')
+    mode = request.query_params.get('mode')
+    access = request.query_params.get('access')
+    links = _collect_item_links(item_id) if item_id else []
+    return templates.TemplateResponse("choose_metric.html", {"request": request, "eval_id": eval_id, "item_id": item_id, "mode": mode, "access": access, "links": links})
 
 
 @app.get("/ui/start", response_class=HTMLResponse)
@@ -200,22 +342,155 @@ def ui_start_eval_submit(request: Request,
         selected = [p for p in all_pts if p["id"] in selected_ids]
     else:
         selected = list(all_pts)
-    # group by evaluation_mode then access
-    groups_by_mode = {}
+    # Group by evaluation type (Interview | API evals | Document analysis) then access
+    groups_by_type = {}
     for p in selected:
-        em = p.get("evaluation_mode", "Unknown")
-        ac = p.get("access", "Unknown")
-        groups_by_mode.setdefault(em, {})
-        groups_by_mode[em].setdefault(ac, [])
-        groups_by_mode[em][ac].append(p)
-    # Prepare structure for template
+        for ev in (p.get("evals") or []):
+            et = (ev.get("type") or "").strip().lower()
+            if et.startswith("api"):
+                tkey = "API evals"
+            elif "document" in et:
+                tkey = "Document analysis"
+            else:
+                tkey = "Interview"
+            ac = ev.get("access") or p.get("access") or "Any"
+            groups_by_type.setdefault(tkey, {})
+            groups_by_type[tkey].setdefault(ac, [])
+            item_entry = {"id": p.get("id"), "name": p.get("name"), "evals": [{"eval_id": ev.get("eval_id"), "title": ev.get("title"), "type": ev.get("type")}]} 
+            groups_by_type[tkey][ac].append(item_entry)
+    # Compute status map per evaluation id for this eval_id
+    status_map = {}
+    try:
+        db = SessionLocal()
+        # Collect results joined with runs for this evaluation
+        res = db.query(MetricResult, Run).join(Run, Run.run_id == MetricResult.run_id).filter(Run.evaluation_id == eval_id).all()
+        passed = set()
+        failed = set()
+        for mr, run in res:
+            if mr.passed:
+                passed.add(mr.metric_code)
+            else:
+                failed.add(mr.metric_code)
+        # In-progress: runs that reference a metric anchor but no result yet
+        runs = db.query(Run).filter(Run.evaluation_id == eval_id).all()
+        for r in runs:
+            mp = (r.metric_spec_path or '')
+            if '#' in mp:
+                mid = mp.split('#',1)[1]
+                if mid not in passed and mid not in failed:
+                    if (r.status or '').lower() != 'evaluated':
+                        status_map[mid] = 'in_progress'
+        # Set final statuses
+        for mid in failed:
+            status_map[mid] = 'failed'
+        for mid in passed:
+            status_map[mid] = 'passed'
+    except Exception:
+        status_map = {}
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+    # Compute selected metric_ids for parent evaluation record
+    selected_metric_ids = set()
+    for p in selected:
+        for ev in (p.get("evals") or []):
+            mid = ev.get("eval_id") or ev.get("id")
+            if mid:
+                selected_metric_ids.add(mid)
+
+    # Upsert a parent Run row for this evaluation
+    db0 = SessionLocal()
+    try:
+        parent = db0.query(Run).filter_by(run_id=eval_id).first()
+        if not parent:
+            parent = Run(
+                run_id=eval_id,
+                system_id="",
+                mode="standard",
+                standard_code=standard_code,
+                dataset_ref=json.dumps({}),
+                selected_metric_codes=json.dumps(sorted(list(selected_metric_ids))),
+                started_at=now_iso(),
+                status="planned",
+                evaluation_id=eval_id,
+            )
+            db0.add(parent)
+        else:
+            parent.selected_metric_codes = json.dumps(sorted(list(selected_metric_ids)))
+            parent.standard_code = standard_code
+            if not parent.started_at:
+                parent.started_at = now_iso()
+        db0.commit()
+    finally:
+        db0.close()
+
     grouped = []
-    for em, acc_map in groups_by_mode.items():
+    for tkey, acc_map in groups_by_type.items():
         grouped.append({
-            "evaluation_mode": em,
+            "evaluation_type": tkey,
             "access_groups": [{"access": ac, "items": items} for ac, items in acc_map.items()]
         })
-    return templates.TemplateResponse("plan_sections.html", {"request": request, "standard_name": std["name"], "groups": grouped, "eval_id": eval_id})
+    return templates.TemplateResponse("plan_sections.html", {"request": request, "standard_name": std["name"], "groups": grouped, "eval_id": eval_id, "status_map": status_map})
+
+
+@app.get("/ui/plan", response_class=HTMLResponse)
+def ui_plan(request: Request):
+    eval_id = request.query_params.get('eval_id')
+    std = _load_standard_points()
+    # Group by evaluation type and access
+    groups_by_type = {}
+    for p in std["points"]:
+        for ev in (p.get("evals") or []):
+            et = (ev.get("type") or "").strip().lower()
+            if et.startswith("api"):
+                tkey = "API evals"
+            elif "document" in et:
+                tkey = "Document analysis"
+            else:
+                tkey = "Interview"
+            ac = ev.get("access") or p.get("access") or "Any"
+            groups_by_type.setdefault(tkey, {})
+            groups_by_type[tkey].setdefault(ac, [])
+            item_entry = {"id": p.get("id"), "name": p.get("name"), "evals": [{"eval_id": ev.get("eval_id"), "title": ev.get("title"), "type": ev.get("type")}]} 
+            groups_by_type[tkey][ac].append(item_entry)
+    grouped = []
+    for tkey, acc_map in groups_by_type.items():
+        grouped.append({
+            "evaluation_type": tkey,
+            "access_groups": [{"access": ac, "items": items} for ac, items in acc_map.items()]
+        })
+    # Status map for this eval
+    status_map = {}
+    if eval_id:
+        try:
+            db = SessionLocal()
+            res = db.query(MetricResult, Run).join(Run, Run.run_id == MetricResult.run_id).filter(Run.evaluation_id == eval_id).all()
+            passed = set()
+            failed = set()
+            for mr, run in res:
+                (passed if mr.passed else failed).add(mr.metric_code)
+            runs = db.query(Run).filter(Run.evaluation_id == eval_id).all()
+            for r in runs:
+                mp = (r.metric_spec_path or '')
+                if '#' in mp:
+                    mid = mp.split('#',1)[1]
+                    if mid not in passed and mid not in failed:
+                        if (r.status or '').lower() != 'evaluated':
+                            status_map[mid] = 'in_progress'
+            for mid in failed:
+                status_map[mid] = 'failed'
+            for mid in passed:
+                status_map[mid] = 'passed'
+        except Exception:
+            status_map = {}
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+    return templates.TemplateResponse("plan_sections.html", {"request": request, "standard_name": std["name"], "groups": grouped, "eval_id": eval_id, "status_map": status_map})
 
 
 @app.get("/ui/api", response_class=HTMLResponse)
@@ -323,12 +598,18 @@ def ui_new_submit(request: Request,
     create_plan(plan_payload)
     # Attach evaluation_id to this run if provided
     eval_id = request.query_params.get('eval_id')
+    metric_id = request.query_params.get('metric_id')
     if eval_id:
         db2 = SessionLocal()
         try:
             r = db2.query(Run).filter_by(run_id=run_id).first()
             if r:
                 r.evaluation_id = eval_id
+                # Save metric spec path if metric_id is present
+                if metric_id:
+                    mpath = _resolve_metric_path(metric_id)
+                    if mpath:
+                        r.metric_spec_path = mpath
                 db2.commit()
         finally:
             db2.close()
@@ -389,7 +670,7 @@ def ui_new_submit(request: Request,
             analysis["clarification"] = error_clarification
 
     item_id = request.query_params.get('item_id')
-    metric_id = request.query_params.get('metric_id')
+    # metric_id was read above
     return templates.TemplateResponse("new_eval_result.html", {
         "request": request,
         "system_id": system_id,
@@ -440,10 +721,27 @@ def _route_for_mode_access(mode: str, access: str) -> str:
 
 
 @app.get("/ui/eval")
-def ui_eval_router(request: Request, eval_id: str, item_id: str, mode: str, access: str, metric_id: str | None = None):
-    base = _route_for_mode_access(mode, access)
+def ui_eval_router(request: Request, eval_id: str, item_id: str, mode: str | None = None, access: str | None = None, metric_id: str | None = None):
+    # Prefer metric type to choose route; fallback to mode/access
+    base = None
+    if metric_id:
+        meta = _resolve_metric_meta(metric_id)
+        mtype = (meta or {}).get("type", "") if meta else ""
+        mt = mtype.lower()
+        if "api" in mt:
+            base = "/ui/api"
+        elif "document" in mt or "doc" in mt:
+            base = "/ui/document"
+        elif "conversation" in mt or "interview" in mt:
+            base = "/ui/conversation"
+    if not base:
+        base = _route_for_mode_access(mode, access)
     # Preserve all params
-    q = f"eval_id={eval_id}&item_id={item_id}&mode={mode}&access={access}"
+    q = f"eval_id={eval_id}&item_id={item_id}"
+    if mode is not None:
+        q += f"&mode={mode}"
+    if access is not None:
+        q += f"&access={access}"
     if metric_id:
         q += f"&metric_id={metric_id}"
     if not metric_id:
@@ -458,6 +756,8 @@ def ui_evidence(request: Request):
     metric_id = request.query_params.get('metric_id')
     mode = request.query_params.get('mode')
     access = request.query_params.get('access')
+    if eval_id and metric_id:
+        _ensure_in_progress(eval_id, metric_id)
     return templates.TemplateResponse("evidence_placeholder.html", {"request": request, "eval_id": eval_id, "item_id": item_id, "metric_id": metric_id, "mode": mode, "access": access})
 
 
@@ -468,20 +768,184 @@ def ui_org(request: Request):
     metric_id = request.query_params.get('metric_id')
     mode = request.query_params.get('mode')
     access = request.query_params.get('access')
+    if eval_id and metric_id:
+        _ensure_in_progress(eval_id, metric_id)
     return templates.TemplateResponse("org_placeholder.html", {"request": request, "eval_id": eval_id, "item_id": item_id, "metric_id": metric_id, "mode": mode, "access": access})
 
 
+@app.get("/ui/document", response_class=HTMLResponse)
+def ui_document_get(request: Request):
+    eval_id = request.query_params.get('eval_id')
+    item_id = request.query_params.get('item_id')
+    metric_id = request.query_params.get('metric_id')
+    if eval_id and metric_id:
+        _ensure_in_progress(eval_id, metric_id)
+    return templates.TemplateResponse("document_eval.html", {"request": request, "eval_id": eval_id, "item_id": item_id, "metric_id": metric_id})
+
+
+@app.post("/ui/document", response_class=HTMLResponse)
+def ui_document_post(request: Request,
+                     eval_id: str = Form(...),
+                     item_id: str = Form(...),
+                     metric_id: str = Form(...),
+                     doc_text: str = Form(...)):
+    # Load metric spec and use rubric/instructions for document evaluation
+    mpath = _resolve_metric_path(metric_id)
+    metric_name = None
+    rubric = None
+    spec = {}
+    # If embedded in ISO_24001.json, use evaluation entry directly
+    ev = _get_evaluation(metric_id)
+    if ev:
+        metric_name = ev.get('eval_name') or ev.get('title') or metric_id
+        rubric = (ev.get('scoring') or {}).get('rubric') or ev.get('rubric')
+        if not rubric:
+            # Build a simple rubric from how_to_evaluate and pass_criteria if present
+            h = ev.get('how_to_evaluate')
+            pc = ev.get('pass_criteria')
+            rubric = f"Evaluate quality and completeness. {('How to evaluate: ' + h) if h else ''} {('Passing: ' + pc) if pc else ''}".strip()
+    elif mpath and mpath.endswith('.json'):
+        try:
+            spec = json.loads(open(mpath).read())
+            metric_name = spec.get('meta', {}).get('display_name')
+            rubric = spec.get('scoring', {}).get('rubric') or spec.get('rubric')
+        except Exception:
+            spec = {}
+    from .clients.gemini_client import GeminiClient
+    try:
+        client = GeminiClient()
+    except Exception:
+        client = None
+    score = 0.0
+    explanation = ""
+    if client:
+        prompt = f"""
+You are scoring a document against the following metric.
+Metric name: {metric_name or metric_id}
+Rubric/instructions: {rubric or 'Score quality and completeness.'}
+
+Document:
+"""
+        prompt += doc_text
+        prompt += "\n\nReturn ONLY JSON: {\"score\": <0..1>, \"explanation\": \"...\"}."
+        try:
+            txt = client.complete(prompt).strip()
+            data = json.loads(txt)
+            score = float(data.get('score', 0.0))
+            explanation = data.get('explanation', '')
+        except Exception:
+            score = 0.0
+            explanation = ""
+    # Persist minimal result tied to eval
+    run_id = f"doc-{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}"
+    db = SessionLocal()
+    try:
+        r = Run(run_id=run_id, system_id="", mode="standard", dataset_ref="{}", started_at=now_iso(), status="evaluated", evaluation_id=eval_id, overall_score=score, metric_spec_path=mpath)
+        db.add(r)
+        mr = MetricResult(run_id=run_id, metric_code=metric_id, result=json.dumps({"score": score, "explanation": explanation}), passed=1 if score >= 0.8 else 0)
+        db.add(mr)
+        db.commit()
+    finally:
+        db.close()
+    _update_evaluation_summary(eval_id)
+    return templates.TemplateResponse("metric_run_result.html", {"request": request, "run_id": run_id, "metric_id": metric_id, "per_conversation": [{"idx": 1, "score": score, "pass": score >= 0.8}], "summary": {"count": 1, "mean": score, "failed_count": 0 if score >= 0.8 else 1}, "eval_id": eval_id})
+
+
+@app.get("/ui/conversation", response_class=HTMLResponse)
+def ui_conversation_get(request: Request):
+    eval_id = request.query_params.get('eval_id')
+    item_id = request.query_params.get('item_id')
+    metric_id = request.query_params.get('metric_id')
+    if eval_id and metric_id:
+        _ensure_in_progress(eval_id, metric_id)
+    # Load metric prompts/questions
+    mpath = _resolve_metric_path(metric_id)
+    questions = []
+    try:
+        spec = json.loads(open(mpath).read()) if mpath else {}
+        for it in (spec.get('items') or []):
+            for convo in (it.get('messages') or []):
+                for msg in convo:
+                    if msg.get('role') == 'user':
+                        questions.append(msg.get('content'))
+    except Exception:
+        pass
+    # Render a simple input form with questions
+    fields = []
+    for i, q in enumerate(questions[:10], start=1):
+        fields.append({"name": f"q{i}", "label": q})
+    return templates.TemplateResponse("conversation_eval.html", {"request": request, "eval_id": eval_id, "item_id": item_id, "metric_id": metric_id, "fields": fields})
+
+
+@app.post("/ui/conversation", response_class=HTMLResponse)
+def ui_conversation_post(request: Request,
+                         eval_id: str = Form(...),
+                         item_id: str = Form(...),
+                         metric_id: str = Form(...),
+                         **answers):
+    # Build transcript
+    transcript = []
+    for k, v in answers.items():
+        if k.startswith('q'):
+            transcript.append({"role": "user", "content": k})
+            transcript.append({"role": "assistant", "content": v})
+    # Score via LLM rubric
+    mpath = _resolve_metric_path(metric_id)
+    rubric = None
+    # Prefer embedded evaluation rubric/fields
+    ev = _get_evaluation(metric_id)
+    if ev:
+        rubric = (ev.get('scoring') or {}).get('rubric') or ev.get('rubric')
+        if not rubric:
+            h = ev.get('how_to_evaluate')
+            pc = ev.get('pass_criteria')
+            rubric = f"Score 0..1 based on quality. {('How to evaluate: ' + h) if h else ''} {('Passing: ' + pc) if pc else ''}".strip()
+    elif mpath and mpath.endswith('.json'):
+        try:
+            spec = json.loads(open(mpath).read())
+            rubric = spec.get('scoring', {}).get('rubric') or spec.get('rubric')
+        except Exception:
+            pass
+    from .clients.gemini_client import GeminiClient
+    try:
+        client = GeminiClient()
+    except Exception:
+        client = None
+    score = 0.0
+    if client:
+        text = "\n".join([f"{m['role']}: {m['content']}" for m in transcript])
+        prompt = f"{rubric or 'Score 0..1 based on quality.'}\n\nTranscript:\n{text}\n\nReturn only a number between 0 and 1."
+        try:
+            resp = client.complete(prompt).strip()
+            score = float(resp)
+        except Exception:
+            score = 0.0
+    # Persist minimal result
+    run_id = f"conv-{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}"
+    db = SessionLocal()
+    try:
+        r = Run(run_id=run_id, system_id="", mode="standard", dataset_ref="{}", started_at=now_iso(), status="evaluated", evaluation_id=eval_id, overall_score=score, metric_spec_path=mpath)
+        db.add(r)
+        mr = MetricResult(run_id=run_id, metric_code=metric_id, result=json.dumps({"score": score}), passed=1 if score >= 0.8 else 0)
+        db.add(mr)
+        db.commit()
+    finally:
+        db.close()
+    _update_evaluation_summary(eval_id)
+    return templates.TemplateResponse("metric_run_result.html", {"request": request, "run_id": run_id, "metric_id": metric_id, "per_conversation": [{"idx": 1, "score": score, "pass": score >= 0.8}], "summary": {"count": 1, "mean": score, "failed_count": 0 if score >= 0.8 else 1}, "eval_id": eval_id})
+
+
 def _resolve_metric_path(metric_id: str):
+    # Try embedded evaluation first: return anchor path
+    ev = _get_evaluation(metric_id)
+    if ev:
+        return f"data/ISO_24001.json#{metric_id}"
+    # Legacy
     std = _load_standard_points()
     for p in std["points"]:
-        for ln in p.get("links", []) or []:
-            if ln.get("id") == metric_id:
-                # Build absolute path under data/
-                import pathlib
-                base = pathlib.Path("data")
-                path = ln.get("path")
-                full = base / path
-                return str(full)
+        for ln in p.get("evals", []) or []:
+            if (ln.get("eval_id") or ln.get("id")) == metric_id and ln.get("path"):
+                return str(ln.get("path"))
     return None
 
 
@@ -491,15 +955,23 @@ def ui_metric_runner(request: Request):
     item_id = request.query_params.get('item_id')
     metric_id = request.query_params.get('metric_id')
     system_id = request.query_params.get('system_id') or ''
-    # Load metric name
+    # Load evaluation/metric name
     metric_name = None
     mpath = _resolve_metric_path(metric_id) if metric_id else None
-    if mpath:
+    ev = _get_evaluation(metric_id) if metric_id else None
+    if ev:
+        metric_name = ev.get('eval_name') or ev.get('title') or ev.get('eval_id')
+    elif mpath and not mpath.endswith('.json'):
+        metric_name = metric_id
+    elif mpath:
         try:
             spec = json.loads(open(mpath).read())
             metric_name = spec.get('meta', {}).get('display_name')
         except Exception:
             metric_name = None
+    # Mark as in-progress when landing on the test page
+    if eval_id and metric_id:
+        _ensure_in_progress(eval_id, metric_id)
     return templates.TemplateResponse("metric_runner.html", {"request": request, "eval_id": eval_id, "item_id": item_id, "metric_id": metric_id, "system_id": system_id, "metric_name": metric_name})
 
 
@@ -511,58 +983,88 @@ def ui_metric_runner_post(request: Request,
                           system_id: str = Form(...),
                           run_mode: str = Form("regular"),
                           custom_reps: int = Form(3)):
-    # Load metric spec
+    # Load evaluation spec (new structure) or legacy metric spec
     mpath = _resolve_metric_path(metric_id)
-    if not mpath:
-        raise HTTPException(400, "Unknown metric")
-    try:
-        spec = json.loads(open(mpath).read())
-    except Exception as e:
-        raise HTTPException(400, f"Failed to load metric: {e}")
-
-    # Build dataset of conversations
     items = []
-    default_calls = spec.get('defaults', {}).get('calls_per_item') or None
-    for it in spec.get('items', []) or []:
-        reps = it.get('calls_per_item', default_calls) or 1
+    ev = _get_evaluation(metric_id)
+    spec = {}
+    if ev and ev.get('type','').lower().find('api') >= 0:
+        runs = ev.get('runs_per_message') or 1
         if run_mode == 'test':
-            reps = 1
+            runs = 1
         elif run_mode == 'custom':
-            reps = max(1, int(custom_reps or 1))
-        for _ in range(reps):
-            for convo in (it.get('messages') or []):
-                # Convert to conversation list of dicts
+            runs = max(1, int(custom_reps or 1))
+        for _ in range(runs):
+            for convo in (ev.get('messages') or []):
                 conv = []
                 for msg in convo:
                     conv.append({"role": msg.get("role"), "content": msg.get("content")})
                 items.append({"conversation": conv})
+    else:
+        if not mpath:
+            raise HTTPException(400, "Unknown metric")
+        try:
+            spec = json.loads(open(mpath).read())
+        except Exception as e:
+            raise HTTPException(400, f"Failed to load metric: {e}")
+        default_calls = spec.get('defaults', {}).get('calls_per_item') or None
+        for it in spec.get('items', []) or []:
+            reps = it.get('calls_per_item', default_calls) or 1
+            if run_mode == 'test':
+                reps = 1
+            elif run_mode == 'custom':
+                reps = max(1, int(custom_reps or 1))
+            for _ in range(reps):
+                for convo in (it.get('messages') or []):
+                    conv = []
+                    for msg in convo:
+                        conv.append({"role": msg.get("role"), "content": msg.get("content")})
+                    items.append({"conversation": conv})
 
     # Execute as one run
     run_id = f"metric-{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}"
-    # Ensure mapping exists
+    # Ensure mapping exists and create parent run row for this metric execution
     db = SessionLocal()
     try:
-        mapping = db.query(Mapping).filter_by(system_id=system_id).order_by(Mapping.id.desc()).first()
-        if not mapping:
+        mapping_row = db.query(Mapping).filter_by(system_id=system_id).order_by(Mapping.id.desc()).first()
+        if not mapping_row:
             raise HTTPException(400, "No mapping found for system")
-        sys = db.query(System).filter_by(system_id=system_id).first()
+        sys_row = db.query(System).filter_by(system_id=system_id).first()
+        # Snapshot system fields before closing session
+        sys_endpoint = sys_row.endpoint
+        sys_method = sys_row.method
+        sys_headers = json.loads(sys_row.headers or "{}")
+        sys_body = json.loads(sys_row.body or "{}")
+        # Snapshot mapping fields before closing session
+        map_prompt_paths = json.loads(mapping_row.prompt_paths or "[]")
+        map_response_paths = json.loads(mapping_row.response_paths or "[]")
+        map_error_rules = json.loads(mapping_row.error_rules or "{}")
+        map_input_placeholder = mapping_row.input_placeholder or "${input}"
+        map_session_id_field = mapping_row.session_id_field
+        map_api_key_name = mapping_row.api_key_name
+        map_api_key_value = mapping_row.api_key_value
+        map_message_extractor = mapping_row.message_extractor
+        # Create a Run row so status tracking works
+        run_row = Run(run_id=run_id, system_id=system_id, mode="standard", standard_code="ISO_24001", dataset_ref=json.dumps({}), selected_metric_codes=json.dumps([metric_id]), started_at=now_iso(), status="running", evaluation_id=eval_id, metric_spec_path=mpath)
+        db.add(run_row)
+        db.commit()
     finally:
         db.close()
     system = {
-        "endpoint": sys.endpoint,
-        "method": sys.method,
-        "headers": json.loads(sys.headers or "{}"),
-        "body": json.loads(sys.body or "{}")
+        "endpoint": sys_endpoint,
+        "method": sys_method,
+        "headers": sys_headers,
+        "body": sys_body,
     }
     mapping_obj = {
-        "prompt_paths": json.loads(mapping.prompt_paths or "[]"),
-        "response_paths": json.loads(mapping.response_paths or "[]"),
-        "error_rules": json.loads(mapping.error_rules or "{}"),
-        "input_placeholder": mapping.input_placeholder or "${input}",
-        "session_id_field": mapping.session_id_field,
-        "api_key_name": mapping.api_key_name,
-        "api_key_value": mapping.api_key_value,
-        "message_extractor": mapping.message_extractor,
+        "prompt_paths": map_prompt_paths,
+        "response_paths": map_response_paths,
+        "error_rules": map_error_rules,
+        "input_placeholder": map_input_placeholder,
+        "session_id_field": map_session_id_field,
+        "api_key_name": map_api_key_name,
+        "api_key_value": map_api_key_value,
+        "message_extractor": map_message_extractor,
     }
 
     # Save dataset transiently and execute
@@ -572,11 +1074,36 @@ def ui_metric_runner_post(request: Request,
     from .evaluator import load_artifacts
     artifacts = load_artifacts(run_id)
     per_conv = []
-    method = spec.get('scoring', {}).get('method')
+    # Determine scoring method/rubric
+    method = None
+    rubric = None
+    budget = None
+    if ev:
+        scoring = ev.get('scoring') or {}
+        sm = (scoring.get('method') or ev.get('method') or '').lower()
+        pc = scoring.get('pass_criteria') or ev.get('pass_criteria') or ''
+        if any(k in sm for k in ['latency', 'millisecond', 'ms']):
+            method = 'latency_ms'
+            # Try extract a budget like "≤ 4000 ms" from pass_criteria
+            try:
+                import re as _re
+                m = _re.search(r"(\d{2,})\s*ms", pc.lower())
+                budget = int(m.group(1)) if m else None
+            except Exception:
+                budget = None
+        else:
+            method = 'llm'
+            rubric = scoring.get('rubric') or ev.get('rubric')
+            if not rubric:
+                h = ev.get('how_to_evaluate')
+                rubric = f"Score 0..1 based on quality. {('How to evaluate: ' + h) if h else ''}".strip()
+    else:
+        method = (spec.get('scoring', {}) or {}).get('method')
     mean = 0.0
     failed = []
     if method == 'latency_ms':
-        budget = spec.get('scoring', {}).get('budget_ms', 4000)
+        if budget is None:
+            budget = (spec.get('scoring', {}) or {}).get('budget_ms', 4000)
         scores = []
         for a in artifacts:
             lat = a.get('latency_ms') or 0
@@ -596,7 +1123,8 @@ def ui_metric_runner_post(request: Request,
     else:
         # LLM judge on conversation transcript
         from .clients.gemini_client import GeminiClient
-        rubric = spec.get('scoring', {}).get('rubric', 'Score 0..1 based on quality.')
+        if not rubric:
+            rubric = (spec.get('scoring', {}) or {}).get('rubric', 'Score 0..1 based on quality.')
         try:
             client = GeminiClient()
         except Exception:
@@ -632,11 +1160,15 @@ def ui_metric_runner_post(request: Request,
             r.evaluation_id = eval_id
             r.status = "evaluated"
             r.overall_score = mean
+            # persist metric path on run
+            r.metric_spec_path = mpath
         db.commit()
     finally:
         db.close()
 
-    return templates.TemplateResponse("metric_run_result.html", {"request": request, "run_id": run_id, "metric_id": metric_id, "per_conversation": per_conv, "summary": summary})
+    _update_evaluation_summary(eval_id)
+
+    return templates.TemplateResponse("metric_run_result.html", {"request": request, "run_id": run_id, "metric_id": metric_id, "per_conversation": per_conv, "summary": summary, "eval_id": eval_id})
 
 
 @app.post("/ui/api/run_dataset", response_class=HTMLResponse)
@@ -734,7 +1266,7 @@ def ui_run_detail(request: Request, run_id: str):
         r = db.query(Run).filter_by(run_id=run_id).first()
         from .evaluator import load_artifacts
         artifacts = load_artifacts(run_id)
-        return templates.TemplateResponse("run_detail.html", {"request": request, "run": r, "artifacts": artifacts})
+        return templates.TemplateResponse("run_detail.html", {"request": request, "run": r, "artifacts": artifacts, "eval_id": (r.evaluation_id if r else None)})
     finally:
         db.close()
 

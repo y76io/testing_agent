@@ -1,0 +1,24 @@
+{% extends 'layout.html' %}
+{% block content %}
+  <h2 style="margin-top:0;">Conversation Evaluation</h2>
+  <p style="color:var(--muted);">Eval: {{ eval_id }} — Item: {{ item_id }} — Metric: {{ metric_id }}</p>
+  {% if fields and fields|length %}
+  <form method="post" action="/ui/conversation" onsubmit="showLoading()">
+    <input type="hidden" name="eval_id" value="{{ eval_id }}" />
+    <input type="hidden" name="item_id" value="{{ item_id }}" />
+    <input type="hidden" name="metric_id" value="{{ metric_id }}" />
+    {% for f in fields %}
+      <label>{{ f.label }}</label>
+      <textarea name="{{ f.name }}" rows="3"></textarea>
+    {% endfor %}
+    <div style="margin-top:1rem;"><button class="btn" type="submit">Submit Answers</button></div>
+  </form>
+  {% else %}
+    <p>No questions found in this metric spec.</p>
+  {% endif %}
+  {% if eval_id %}
+  <div style="margin-top:12px; text-align:right;">
+    <a class="btn secondary" href="/ui/plan?eval_id={{ eval_id }}">Main evaluation</a>
+  </div>
+  {% endif %}
+{% endblock %}
