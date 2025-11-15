@@ -888,17 +888,18 @@ def ui_conversation_get(request: Request):
 
 
 @app.post("/ui/conversation", response_class=HTMLResponse)
-def ui_conversation_post(request: Request,
+async def ui_conversation_post(request: Request,
                          eval_id: str = Form(...),
                          item_id: str = Form(...),
-                         metric_id: str = Form(...),
-                         **answers):
+                         metric_id: str = Form(...)):
     # Build transcript using embedded interview prompts in order
     ev = _get_evaluation(metric_id) or {}
     prompts = [q for q in (ev.get('interview_prompts') or []) if isinstance(q, str)]
+    # Read dynamic answers from the submitted form
+    form = await request.form()
     transcript = []
     for i, q in enumerate(prompts[:10], start=1):
-        ans = answers.get(f'q{i}', '')
+        ans = form.get(f'q{i}', '')
         transcript.append({"role": "user", "content": q})
         transcript.append({"role": "assistant", "content": ans})
     # Score via LLM rubric
