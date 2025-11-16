@@ -889,10 +889,19 @@ def ui_conversation_get(request: Request):
 
 @app.post("/ui/conversation", response_class=HTMLResponse)
 async def ui_conversation_post(request: Request,
-                         eval_id: str = Form(...),
-                         item_id: str = Form(...),
-                         metric_id: str = Form(...)):
+                         eval_id: str | None = Form(None),
+                         item_id: str | None = Form(None),
+                         metric_id: str | None = Form(None)):
     # Build transcript using embedded interview prompts in order
+    # Fallback to query params if not present in form
+    if not (eval_id and item_id and metric_id):
+        q = request.query_params
+        eval_id = eval_id or q.get('eval_id')
+        item_id = item_id or q.get('item_id')
+        metric_id = metric_id or q.get('metric_id')
+    if not (eval_id and item_id and metric_id):
+        raise HTTPException(400, "Missing evaluation context")
+
     ev = _get_evaluation(metric_id) or {}
     prompts = [q for q in (ev.get('interview_prompts') or []) if isinstance(q, str)]
     # Read dynamic answers from the submitted form
