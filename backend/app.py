@@ -849,6 +849,22 @@ def ui_document_post(request: Request,
         except Exception:
             score = 0.0
             explanation = ""
+    # Fallback reasoning/suggestions if no LLM or bad response
+    if not explanation:
+        ev_meta = _get_evaluation(metric_id) or {}
+        how_fb = ev_meta.get('how_to_evaluate')
+        pc_fb = ev_meta.get('pass_criteria')
+        docs_fb = ev_meta.get('documents_requested') or []
+        bits = []
+        if pc_fb:
+            bits.append(f"Pass criteria: {pc_fb}")
+        if how_fb:
+            bits.append(f"How to evaluate: {how_fb}")
+        explanation = "; ".join(bits) or "Insufficient evidence to assess against criteria."
+        if docs_fb:
+            improvements = [f"Provide: {d}" for d in docs_fb]
+        if pc_fb:
+            improvements.append("Align content to pass criteria above.")
     # Persist minimal result tied to eval
     run_id = f"doc-{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}"
     db = SessionLocal()
@@ -956,6 +972,18 @@ async def ui_conversation_post(request: Request,
             improvements = data.get('improvement_suggestions') or []
         except Exception:
             score = 0.0
+    # Fallback reasoning/suggestions if no LLM or bad response
+    if not explanation:
+        how_fb = ev.get('how_to_evaluate') if ev else None
+        pc_fb = ev.get('pass_criteria') if ev else None
+        bits = []
+        if pc_fb:
+            bits.append(f"Pass criteria: {pc_fb}")
+        if how_fb:
+            bits.append(f"How to evaluate: {how_fb}")
+        explanation = "; ".join(bits) or "Answers did not meet the expected quality and completeness."
+        if pc_fb:
+            improvements.append("Address gaps relative to pass criteria above.")
     # Persist minimal result
     run_id = f"conv-{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}"
     db = SessionLocal()
@@ -1207,6 +1235,11 @@ def ui_metric_runner_post(request: Request,
                     imps = data.get('improvement_suggestions') or []
                 except Exception:
                     val = 0.0
+            if not exp:
+                # Fallback explanation when LLM not available
+                exp = (f"Evaluated against rubric; " + (f"pass criteria: {pc}." if pc else "insufficient details to justify a pass.")) if rubric else "Insufficient details to judge."
+                if pc:
+                    imps.append("Align responses to the pass criteria above.")
             scores.append(val)
             ok = val >= 0.8
             per_conv.append({"idx": a.get('idx'), "score": val, "pass": ok, "explanation": exp, "improvements": imps})
