@@ -939,14 +939,14 @@ def ui_conversation_get(request: Request):
     metric_id = request.query_params.get('metric_id')
     if eval_id and metric_id:
         _ensure_in_progress(eval_id, metric_id)
-    # Generate interview questions dynamically from evaluation context (fallback to embedded)
-    questions = _generate_interview_questions(metric_id, max_q=5)
+    # Use embedded interview prompts (fast, no external calls)
+    ev = _get_evaluation(metric_id) or {}
+    questions = [q for q in (ev.get('interview_prompts') or []) if isinstance(q, str)]
     # Render a simple input form with questions
     fields = []
     for i, q in enumerate(questions[:10], start=1):
         fields.append({"name": f"q{i}", "label": q})
-    import json as _json
-    return templates.TemplateResponse("conversation_eval.html", {"request": request, "eval_id": eval_id, "item_id": item_id, "metric_id": metric_id, "fields": fields, "generated_questions_json": _json.dumps(questions)})
+    return templates.TemplateResponse("conversation_eval.html", {"request": request, "eval_id": eval_id, "item_id": item_id, "metric_id": metric_id, "fields": fields})
 
 
 @app.post("/ui/conversation", response_class=HTMLResponse)
