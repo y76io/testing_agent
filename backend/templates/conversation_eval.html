@@ -17,6 +17,9 @@
     <input type="hidden" name="eval_id" value="{{ eval_id }}" />
     <input type="hidden" name="item_id" value="{{ item_id }}" />
     <input type="hidden" name="metric_id" value="{{ metric_id }}" />
+    {% if generated_questions_json %}
+      <input type="hidden" name="generated_questions_json" value='{{ generated_questions_json | tojson | safe }}' />
+    {% endif %}
     {% for f in fields %}
       <label>{{ f.label }}</label>
       <textarea name="{{ f.name }}" rows="3"></textarea>

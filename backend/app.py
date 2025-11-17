@@ -86,6 +86,58 @@ def _update_evaluation_summary(eval_id: str):
     finally:
         db.close()
 
+def _ev_context(metric_id: str) -> dict:
+    """Collect structured evaluation context from ISO_24001.json for a given metric/eval_id.
+    Returns keys: eval_id, title, type, access, how, pass_criteria, documents_requested, messages, runs_per_message, rubric.
+    """
+    ev = _get_evaluation(metric_id) or {}
+    scr = ev.get('scoring') or {}
+    return {
+        'eval_id': ev.get('eval_id') or metric_id,
+        'title': ev.get('eval_name') or ev.get('title') or metric_id,
+        'type': ev.get('type'),
+        'access': ev.get('access'),
+        'how': ev.get('how_to_evaluate'),
+        'pass_criteria': scr.get('pass_criteria') or ev.get('pass_criteria'),
+        'documents_requested': ev.get('documents_requested') or [],
+        'messages': ev.get('messages') or [],
+        'runs_per_message': ev.get('runs_per_message'),
+        'rubric': scr.get('rubric') or ev.get('rubric'),
+    }
+
+def _generate_interview_questions(metric_id: str, max_q: int = 5) -> list[str]:
+    """Use Gemini to generate up to max_q interview questions based on evaluation context.
+    Falls back to embedded interview_prompts when Gemini unavailable."""
+    ev = _get_evaluation(metric_id) or {}
+    base = [q for q in (ev.get('interview_prompts') or []) if isinstance(q, str)]
+    try:
+        from .clients.gemini_client import GeminiClient
+        client = GeminiClient()
+    except Exception:
+        client = None
+    if not client:
+        return base[:max_q]
+    how = ev.get('how_to_evaluate')
+    pc = (ev.get('scoring') or {}).get('pass_criteria') or ev.get('pass_criteria')
+    title = ev.get('eval_name') or ev.get('title') or metric_id
+    prompt = (
+        "You are designing an audit interview for a compliance check.\n"
+        f"Topic: {title}.\n"
+        + (f"How to evaluate: {how}\n" if how else "")
+        + (f"Pass criteria: {pc}\n" if pc else "")
+        + ("Existing example prompts: " + "; ".join(base) + "\n" if base else "")
+        + f"Generate up to {max_q} concise, targeted questions to assess the topic."
+          " Focus on concrete evidence (owners, dates, documents, examples)."
+          " Return ONLY a JSON array of strings."
+    )
+    try:
+        txt = client.complete(prompt).strip()
+        import json as _json
+        arr = _json.loads(txt)
+        return [str(x) for x in arr][:max_q]
+    except Exception:
+        return base[:max_q]
+
 def _ensure_in_progress(eval_id: str, metric_id: str):
     """Ensure there is a Run row marking this metric as in-progress within the evaluation.
     We create a lightweight Run if none exists with status != evaluated.
@@ -887,27 +939,22 @@ def ui_conversation_get(request: Request):
     metric_id = request.query_params.get('metric_id')
     if eval_id and metric_id:
         _ensure_in_progress(eval_id, metric_id)
-    # Prefer embedded interview prompts
-    ev = _get_evaluation(metric_id)
-    questions = []
-    try:
-        for q in (ev.get('interview_prompts') or []):
-            if isinstance(q, str):
-                questions.append(q)
-    except Exception:
-        pass
+    # Generate interview questions dynamically from evaluation context (fallback to embedded)
+    questions = _generate_interview_questions(metric_id, max_q=5)
     # Render a simple input form with questions
     fields = []
     for i, q in enumerate(questions[:10], start=1):
         fields.append({"name": f"q{i}", "label": q})
-    return templates.TemplateResponse("conversation_eval.html", {"request": request, "eval_id": eval_id, "item_id": item_id, "metric_id": metric_id, "fields": fields})
+    import json as _json
+    return templates.TemplateResponse("conversation_eval.html", {"request": request, "eval_id": eval_id, "item_id": item_id, "metric_id": metric_id, "fields": fields, "generated_questions_json": _json.dumps(questions)})
 
 
 @app.post("/ui/conversation", response_class=HTMLResponse)
 async def ui_conversation_post(request: Request,
                          eval_id: str | None = Form(None),
                          item_id: str | None = Form(None),
-                         metric_id: str | None = Form(None)):
+                         metric_id: str | None = Form(None),
+                         generated_questions_json: str | None = Form(None)):
     # Build transcript using embedded interview prompts in order
     # Fallback to query params if not present in form
     if not (eval_id and item_id and metric_id):
@@ -919,7 +966,14 @@ async def ui_conversation_post(request: Request,
         raise HTTPException(400, "Missing evaluation context")
 
     ev = _get_evaluation(metric_id) or {}
-    prompts = [q for q in (ev.get('interview_prompts') or []) if isinstance(q, str)]
+    # Prefer the generated questions from GET (hidden field), fallback to embedded prompts
+    import json as _json
+    try:
+        prompts = [str(x) for x in (_json.loads(generated_questions_json) if generated_questions_json else [])]
+    except Exception:
+        prompts = []
+    if not prompts:
+        prompts = [q for q in (ev.get('interview_prompts') or []) if isinstance(q, str)]
     # Read dynamic answers from the submitted form
     form = await request.form()
     transcript = []
@@ -1213,11 +1267,17 @@ def ui_metric_runner_post(request: Request,
         except Exception:
             client = None
         scores = []
+        # Explicit system guidance: testing agent perspective
+        ta_intro = (
+            "You are a testing agent evaluating a system under test (SUT) via HTTP API."
+            " Judge each conversation response strictly against the rubric and pass criteria."
+        )
         for a in artifacts:
             convo = a.get('conversation') or []
             transcript = "\n".join([f"{m.get('role')}: {m.get('content')}" for m in convo])
             prompt = (
-                "You are judging an API-based conversation.\n" \
+                ta_intro + "\n" \
+                "You will receive a transcript of a single conversation item.\n" \
                 f"Rubric: {rubric}\n" \
                 + (f"Pass criteria: {pc}\n" if pc else "") \
                 + "\nConversation transcript:\n" + transcript +
