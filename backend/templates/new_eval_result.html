@@ -45,6 +45,16 @@
       <details class="expander" style="margin-top:8px;">
         <summary>Edit extractor function <span class="chev">▶</span></summary>
         <div class="content">
+          <form method="post" action="/ui/apply_extractor" style="margin-bottom:8px;">
+            <input type="hidden" name="system_id" value="{{ system_id }}" />
+            <input type="hidden" name="run_id" value="{{ run_id }}" />
+            {% if eval_id %}<input type="hidden" name="eval_id" value="{{ eval_id }}" />{% endif %}
+            {% if item_id %}<input type="hidden" name="item_id" value="{{ item_id }}" />{% endif %}
+            {% if metric_id %}<input type="hidden" name="metric_id" value="{{ metric_id }}" />{% endif %}
+            <label>Try extractor (no save)</label>
+            <textarea name="extractor_code" rows="10">{{ mapping.message_extractor or 'def extract_message(resp):\n    return ""' }}</textarea>
+            <div style="margin-top:.5rem;"><button class="btn secondary" type="submit">Apply without saving</button></div>
+          </form>
           <form method="post" action="/ui/save_extractor">
             <input type="hidden" name="system_id" value="{{ system_id }}" />
             <input type="hidden" name="run_id" value="{{ run_id }}" />

@@ -1497,6 +1497,48 @@ def ui_save_extractor(request: Request,
         "metric_id": metric_id,
     })
 
+
+@app.post("/ui/apply_extractor", response_class=HTMLResponse)
+def ui_apply_extractor(request: Request,
+                       system_id: str = Form(...),
+                       run_id: str = Form(...),
+                       extractor_code: str = Form(...),
+                       eval_id: str | None = Form(None),
+                       item_id: str | None = Form(None),
+                       metric_id: str | None = Form(None)):
+    # Recompute preview without persisting extractor
+    from .evaluator import load_artifacts
+    artifacts = load_artifacts(run_id)
+    extracted_preview = ""
+    if artifacts:
+        first = artifacts[0]
+        ns = {}
+        try:
+            exec(extractor_code, {"__builtins__": {}}, ns)
+            if "extract_message" in ns and callable(ns["extract_message"]):
+                extracted_preview = ns["extract_message"](first.get("response", {}).get("body", {})) or ""
+        except Exception:
+            extracted_preview = ""
+    return templates.TemplateResponse("new_eval_result.html", {
+        "request": request,
+        "system_id": system_id,
+        "run_id": run_id,
+        "mapping": {
+            "prompt_paths": [],
+            "response_paths": [],
+            "error_rules": {},
+            "input_placeholder": "${input}",
+            "message_extractor": extractor_code,
+        },
+        "artifacts": artifacts,
+        "analysis": {"is_error": False, "reasons": [], "advice": []},
+        "extracted_preview": extracted_preview,
+        "prev": {"system_id": system_id, "name": "", "endpoint": "", "method": "POST", "headers_json": "{}", "body_json": "{}", "test_prompt": "", "add_api_key": False, "api_key_name": "", "api_key_value": "", "add_session_id": False, "session_id_field": "session_id"},
+        "eval_id": eval_id,
+        "item_id": item_id,
+        "metric_id": metric_id,
+    })
+
 @app.post("/sut")
 def create_or_update_sut(payload: SUTIn):
     db = SessionLocal()
