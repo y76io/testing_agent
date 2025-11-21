@@ -1,0 +1,65 @@
+{% extends 'layout.html' %}
+{% block head %}
+<script>
+  // Use a friendlier message during LLM deliberation on interview pages
+  window.LOADING_WAIT_TEXT = 'Thinking…';
+ </script>
+{% endblock %}
+{% block content %}
+  <h2 style="margin-top:0;">Interview Evaluation</h2>
+  <p style="color:var(--muted);">Eval: {{ eval_id }} — Item: {{ item_id }} — Metric: {{ metric_id }}</p>
+  {% if question %}
+    <div class="card-inner">
+      <div><strong>Question {{ q_index + 1 }} of {{ total_q }}:</strong> {{ question }}</div>
+      <div style="margin-top:4px; color:var(--muted);">Turns remaining: {{ turns_left }}</div>
+    </div>
+  {% endif %}
+
+  {% if transcript and transcript|length %}
+    <div class="card-inner" style="margin-top:8px;">
+      <div><strong>Conversation</strong></div>
+      <div style="margin-top:6px;">
+        {% for m in transcript %}
+          <div style="margin:4px 0;">
+            <span style="font-weight:600;">{{ m.role|capitalize }}:</span>
+            <span style="white-space:pre-wrap;"> {{ m.content }}</span>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
+  {% if done %}
+    <div class="card-inner" style="margin-top:8px;">
+      <div><strong>Result</strong></div>
+      <div>Score: {{ '%.3f'|format(score or 0.0) }}</div>
+      <div style="margin-top:4px; white-space:pre-wrap;">{{ explanation or '' }}</div>
+      <form method="post" action="/ui/interview" style="margin-top:8px;">
+        <input type="hidden" name="eval_id" value="{{ eval_id }}" />
+        <input type="hidden" name="item_id" value="{{ item_id }}" />
+        <input type="hidden" name="metric_id" value="{{ metric_id }}" />
+        <input type="hidden" name="q_index" value="{{ q_index }}" />
+        <input type="hidden" name="advance" value="1" />
+        <button class="btn" type="submit">Next question</button>
+      </form>
+    </div>
+  {% else %}
+    <form method="post" action="/ui/interview" onsubmit="showLoading()" style="margin-top:8px;">
+      <input type="hidden" name="eval_id" value="{{ eval_id }}" />
+      <input type="hidden" name="item_id" value="{{ item_id }}" />
+      <input type="hidden" name="metric_id" value="{{ metric_id }}" />
+      <input type="hidden" name="q_index" value="{{ q_index }}" />
+      <input type="hidden" name="turns_left" value="{{ turns_left }}" />
+      <input type="hidden" name="transcript_json" value='{{ transcript|tojson }}' />
+      <label>Your answer</label>
+      <textarea name="user_answer" rows="3"></textarea>
+      <div style="margin-top:8px;"><button class="btn" type="submit">Submit</button></div>
+    </form>
+  {% endif %}
+
+  {% if eval_id %}
+  <div style="margin-top:12px; text-align:right;">
+    <a class="btn secondary" href="/ui/plan?eval_id={{ eval_id }}">Main evaluation</a>
+  </div>
+  {% endif %}
+{% endblock %}

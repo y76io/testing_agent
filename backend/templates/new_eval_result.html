@@ -34,28 +34,23 @@
         </div>
       {% endif %}
     {% else %}
-      <h3>Extracted Message</h3>
-      <pre style="white-space:pre-wrap;">{{ extracted_preview or a.response.message_extracted or '' }}</pre>
-      {% if mapping.message_extractor %}
-        <details class="expander" style="margin-top:8px;">
-          <summary>Extractor function <span class="chev">▶</span></summary>
-          <div class="content"><pre class="code">{{ mapping.message_extractor }}</pre></div>
-        </details>
-      {% endif %}
+      <!-- 1) Request (hidable) -->
       <details class="expander" style="margin-top:8px;">
-        <summary>Edit extractor function <span class="chev">▶</span></summary>
+        <summary>Request preview <span class="chev">▶</span></summary>
+        <div class="content"><pre class="code">{{ a.request | tojson(indent=2) }}</pre></div>
+      </details>
+
+      <!-- 2) Response (hidable) -->
+      <details class="expander" style="margin-top:8px;" open>
+        <summary>Response preview <span class="chev">▶</span></summary>
+        <div class="content"><pre class="code">{{ a.response.body | tojson(indent=2) }}</pre></div>
+      </details>
+
+      <!-- 3) Extractor (single place, editable, with Test/Save and Extracted message) -->
+      <details class="expander" style="margin-top:8px;" open>
+        <summary>Extractor function <span class="chev">▶</span></summary>
         <div class="content">
-          <form method="post" action="/ui/apply_extractor" style="margin-bottom:8px;">
-            <input type="hidden" name="system_id" value="{{ system_id }}" />
-            <input type="hidden" name="run_id" value="{{ run_id }}" />
-            {% if eval_id %}<input type="hidden" name="eval_id" value="{{ eval_id }}" />{% endif %}
-            {% if item_id %}<input type="hidden" name="item_id" value="{{ item_id }}" />{% endif %}
-            {% if metric_id %}<input type="hidden" name="metric_id" value="{{ metric_id }}" />{% endif %}
-            <label>Try extractor (no save)</label>
-            <textarea name="extractor_code" rows="10">{{ mapping.message_extractor or 'def extract_message(resp):\n    return ""' }}</textarea>
-            <div style="margin-top:.5rem;"><button class="btn secondary" type="submit">Apply without saving</button></div>
-          </form>
-          <form method="post" action="/ui/save_extractor">
+          <form method="post" id="extractor-form">
             <input type="hidden" name="system_id" value="{{ system_id }}" />
             <input type="hidden" name="run_id" value="{{ run_id }}" />
             {% if eval_id %}<input type="hidden" name="eval_id" value="{{ eval_id }}" />{% endif %}
@@ -63,16 +58,20 @@
             {% if metric_id %}<input type="hidden" name="metric_id" value="{{ metric_id }}" />{% endif %}
             <label>Extractor code (Python)</label>
             <textarea name="extractor_code" rows="10">{{ mapping.message_extractor or 'def extract_message(resp):\n    return ""' }}</textarea>
-            <div style="margin-top:.5rem;"><button class="btn" type="submit">Save extractor</button></div>
+            <div style="display:flex; gap:8px; margin-top:.5rem;">
+              <button class="btn secondary" type="button" id="btn-test-extractor">Test</button>
+              <button class="btn" type="submit" formaction="/ui/save_extractor" formmethod="post">Save</button>
+            </div>
+            <div style="margin-top:10px;">
+              <div style="font-weight:600;">Extracted message</div>
+              <pre id="extracted-message" class="code" style="white-space:pre-wrap;">{{ extracted_preview or a.response.message_extracted or '' }}</pre>
+              <div id="extractor-error" style="color: var(--danger); margin-top:.25rem; display:none;"></div>
+            </div>
           </form>
         </div>
       </details>
-    {% endif %}
 
-    <details class="expander">
-      <summary>Response preview <span class="chev">▶</span></summary>
-      <div class="content"><pre class="code">{{ a.response.body | tojson(indent=2) }}</pre></div>
-    </details>
+    {% endif %}
 
     <details class="expander" style="margin-top:8px;">
       <summary>Request preview <span class="chev">▶</span></summary>
@@ -125,6 +124,7 @@
   </form>
   {% endif %}
   {% endif %}
+  {% if analysis and analysis.is_error %}
   <details class="expander" style="margin-top: 1rem;">
     <summary>Adjust and Re-run <span class="chev">▶</span></summary>
     <div class="content">
@@ -166,9 +166,48 @@
     </form>
     </div>
   </details>
+  {% endif %}
   {% if eval_id %}
   <div style="margin-top:12px; text-align:right;">
     <a class="btn secondary" href="/ui/plan?eval_id={{ eval_id }}">Main evaluation</a>
   </div>
   {% endif %}
+  <script>
+    (function(){
+      const form = document.getElementById('extractor-form');
+      const btn = document.getElementById('btn-test-extractor');
+      const out = document.getElementById('extracted-message');
+      const err = document.getElementById('extractor-error');
+      if (btn) {
+        btn.addEventListener('click', async function(){
+          const fd = new FormData(form);
+          fd.append('_ts', String(Date.now()));
+          try {
+            const res = await fetch('/ui/apply_extractor_json', {
+              method: 'POST',
+              body: fd,
+              cache: 'no-store',
+              headers: { 'Accept': 'application/json' }
+            });
+            const data = await res.json();
+            if (data.ok) {
+              if (err) { err.style.display = 'none'; err.textContent=''; }
+              if (out) { out.textContent = data.extracted_message || ''; }
+            } else {
+              let extra = '';
+              if (data.debug && data.debug.code_head) {
+                extra = '\nCode head:\n' + data.debug.code_head;
+                if (data.debug.lineno) {
+                  extra += `\nAt line ${data.debug.lineno}, offset ${data.debug.offset || ''}`;
+                }
+              }
+              if (err) { err.style.display = 'block'; err.textContent = (data.error || 'Extractor error') + extra; }
+            }
+          } catch (e) {
+            if (err) { err.style.display = 'block'; err.textContent = 'Network error testing extractor'; }
+          }
+        });
+      }
+    })();
+  </script>
 {% endblock %}

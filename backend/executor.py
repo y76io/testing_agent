@@ -1,8 +1,37 @@
-import json, time, httpx, os
+import json, time, httpx, os, logging
 from typing import Dict, Any, List
 from .utils.jsonpath_utils import jsonpath_get, jsonpath_set
 from .config import ARTIFACTS_DIR
 import uuid
+import logging
+
+# Whitelisted minimal builtins for executing user-provided extractor safely
+SAFE_BUILTINS = {
+    "isinstance": isinstance,
+    "len": len,
+    "str": str,
+    "list": list,
+    "dict": dict,
+    "type": type,
+    "min": min,
+    "max": max,
+    "enumerate": enumerate,
+    "range": range,
+}
+
+logger = logging.getLogger("testing_agent")
+
+def _normalize_extractor_code(code: str) -> str:
+    if not code:
+        return ""
+    s = str(code).strip()
+    if s.startswith("```"):
+        first_nl = s.find("\n")
+        if first_nl != -1:
+            s = s[first_nl+1:]
+        if s.rstrip().endswith("```"):
+            s = s.rstrip()[:-3]
+    return s.strip()
 
 def _replace_input_placeholders(obj, placeholder: str, value: str):
     if isinstance(obj, dict):
@@ -77,7 +106,15 @@ def execute_dataset(run_id: str, system: Dict[str,Any], mapping: Dict[str,Any], 
                     else:
                         r = client.post(system["endpoint"], headers=headers, json=req_body)
                     status = r.status_code
-                    resp_body = r.json() if "application/json" in r.headers.get("content-type","") else {"text": r.text}
+                    ctype = r.headers.get("content-type", "")
+                    if "application/json" in ctype:
+                        resp_body = r.json()
+                    else:
+                        # Try to parse JSON even if content-type is missing/mis-set
+                        try:
+                            resp_body = json.loads(r.text)
+                        except Exception:
+                            resp_body = {"text": r.text}
                     last_headers = dict(r.headers)
                 except Exception as e:
                     error = True
@@ -109,14 +146,25 @@ def execute_dataset(run_id: str, system: Dict[str,Any], mapping: Dict[str,Any], 
                 # extract message
                 message = None
                 if not error:
+                    try:
+                        keys = list(resp_body.keys()) if isinstance(resp_body, dict) else []
+                        preview = json.dumps(resp_body)[:500] if isinstance(resp_body, (dict, list)) else str(resp_body)[:500]
+                        logger.debug("[executor] (conversation) idx=%s resp keys=%s preview=%s", idx, keys[:20], preview)
+                    except Exception:
+                        logger.debug("[executor] (conversation) idx=%s resp preview unavailable", idx)
                     extractor_code = mapping.get("message_extractor")
                     if extractor_code:
                         ns = {}
                         try:
-                            exec(extractor_code, {"__builtins__": {}}, ns)
+                            extractor_code_norm = _normalize_extractor_code(extractor_code)
+                            logger.debug("[executor] (conversation) idx=%s applying extractor (len=%s)", idx, len(extractor_code_norm))
+                            code_obj = compile(extractor_code_norm, "<extractor>", "exec")
+                            exec(code_obj, {"__builtins__": SAFE_BUILTINS}, ns)
                             if "extract_message" in ns and callable(ns["extract_message"]):
                                 message = ns["extract_message"](resp_body)
+                                logger.debug("[executor] (conversation) idx=%s extractor output: %r", idx, (message[:200] if isinstance(message, str) else message))
                         except Exception:
+                            logger.exception("[executor] (conversation) extractor execution failed at idx=%s", idx)
                             message = None
                     if message in (None, ""):
                         for rp in mapping.get("response_paths", []) or []:
@@ -169,7 +217,15 @@ def execute_dataset(run_id: str, system: Dict[str,Any], mapping: Dict[str,Any], 
                 else:
                     r = client.post(system["endpoint"], headers=headers, json=req_body)
                 status = r.status_code
-                resp_body = r.json() if "application/json" in r.headers.get("content-type","") else {"text": r.text}
+                ctype = r.headers.get("content-type", "")
+                if "application/json" in ctype:
+                    resp_body = r.json()
+                else:
+                    # Try to parse JSON even if content-type is missing/mis-set
+                    try:
+                        resp_body = json.loads(r.text)
+                    except Exception:
+                        resp_body = {"text": r.text}
             except Exception as e:
                 error = True
                 resp_body = {"error": str(e)}
@@ -200,15 +256,26 @@ def execute_dataset(run_id: str, system: Dict[str,Any], mapping: Dict[str,Any], 
             # extract message
             message = None
             if not error:
+                try:
+                    keys = list(resp_body.keys()) if isinstance(resp_body, dict) else []
+                    preview = json.dumps(resp_body)[:500] if isinstance(resp_body, (dict, list)) else str(resp_body)[:500]
+                    logger.debug("[executor] idx=%s resp keys=%s preview=%s", idx, keys[:20], preview)
+                except Exception:
+                    logger.debug("[executor] idx=%s resp preview unavailable", idx)
                 # Preferred: use saved extractor function
                 extractor_code = mapping.get("message_extractor")
                 if extractor_code:
                     ns = {}
                     try:
-                        exec(extractor_code, {"__builtins__": {}}, ns)
+                        extractor_code_norm = _normalize_extractor_code(extractor_code)
+                        logger.debug("[executor] idx=%s applying extractor (len=%s)", idx, len(extractor_code_norm))
+                        code_obj = compile(extractor_code_norm, "<extractor>", "exec")
+                        exec(code_obj, {"__builtins__": SAFE_BUILTINS}, ns)
                         if "extract_message" in ns and callable(ns["extract_message"]):
                             message = ns["extract_message"](resp_body)
+                            logger.debug("[executor] idx=%s extractor output: %r", idx, (message[:200] if isinstance(message, str) else message))
                     except Exception:
+                        logger.exception("[executor] extractor execution failed at idx=%s", idx)
                         message = None
                 # Fallback: use response_paths or common keys
                 if message in (None, ""):

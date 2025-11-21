@@ -65,7 +65,11 @@
         ov.style.display = 'flex';
         const tx = document.getElementById('loading-text');
         if (tx) tx.textContent = 'Sending request…';
-        setTimeout(()=>{ const tx2 = document.getElementById('loading-text'); if (tx2) tx2.textContent = 'Waiting for response…'; }, 600);
+        setTimeout(()=>{
+          const tx2 = document.getElementById('loading-text');
+          const customWait = (typeof window !== 'undefined' && window.LOADING_WAIT_TEXT) ? window.LOADING_WAIT_TEXT : null;
+          if (tx2) tx2.textContent = customWait || 'Waiting for response…';
+        }, 600);
       }
     }
     function hideLoading() {

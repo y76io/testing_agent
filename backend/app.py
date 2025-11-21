@@ -1,6 +1,6 @@
-import os, json, datetime
+import os, json, datetime, logging, traceback, time
 from fastapi import FastAPI, HTTPException, UploadFile, File, Body, Request, Form
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 from .db import Base, engine, SessionLocal
@@ -13,9 +13,30 @@ from .mapping_service import detect_mapping, llm_generate_extractor, llm_analyze
 from .executor import execute_dataset
 from .evaluator import evaluate
 from .reporting import export_csv, export_pdf
-from .config import ARTIFACTS_DIR, REPORTS_DIR
+from .config import ARTIFACTS_DIR, REPORTS_DIR, LOGS_DIR, EXTRACTOR_TESTS_DIR
 from .utils.applicability import dataset_supports_metric, compute_items_stats
 import json
+
+def _setup_file_logging():
+    try:
+        os.makedirs(LOGS_DIR, exist_ok=True)
+    except Exception:
+        pass
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG)
+    # Avoid duplicate handlers when reloading
+    exists = False
+    for h in root.handlers:
+        if isinstance(h, logging.FileHandler) and getattr(h, 'baseFilename', '').endswith('testing_agent.log'):
+            exists = True
+            break
+    if not exists:
+        fh = logging.FileHandler(os.path.join(LOGS_DIR, 'testing_agent.log'))
+        fh.setLevel(logging.DEBUG)
+        fh.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s'))
+        root.addHandler(fh)
+
+_setup_file_logging()
 
 app = FastAPI(title="Testing Agent (No LangFlow)")
 templates = Jinja2Templates(directory="backend/templates")
@@ -55,6 +76,42 @@ _ensure_columns_sqlite()
 
 def now_iso():
     return datetime.datetime.utcnow().isoformat()
+
+# minimal safe builtins for executing extractor functions in preview
+def _safe_builtins():
+    return {
+        "isinstance": isinstance,
+        "len": len,
+        "str": str,
+        "list": list,
+        "dict": dict,
+        "type": type,
+        "min": min,
+        "max": max,
+        "enumerate": enumerate,
+        "range": range,
+        "getattr": getattr,
+        "hasattr": hasattr,
+        "sorted": sorted,
+        "any": any,
+        "all": all,
+    }
+
+def _normalize_extractor_code(code: str) -> str:
+    if not code:
+        return ""
+    s = str(code).strip()
+    # Strip Markdown fences
+    if s.startswith("```"):
+        # Remove opening fence line
+        first_nl = s.find("\n")
+        if first_nl != -1:
+            s = s[first_nl+1:]
+        # Remove trailing fence
+        if s.rstrip().endswith("```"):
+            s = s.rstrip()
+            s = s[:-3]
+    return s.strip()
 
 def _update_evaluation_summary(eval_id: str):
     if not eval_id:
@@ -698,6 +755,7 @@ def ui_new_submit(request: Request,
         analysis = llm_analyze_error(first.get("response", {}).get("status", 0), first.get("response", {}).get("body", {}), first.get("request", {}).get("body", {}))
         if not analysis.get("is_error"):
             extractor_code = llm_generate_extractor(first.get("response", {}).get("body", {}))
+            extractor_code = _normalize_extractor_code(extractor_code)
             # Save extractor on the latest mapping for the system
             db = SessionLocal()
             try:
@@ -711,7 +769,8 @@ def ui_new_submit(request: Request,
             if extractor_code:
                 ns = {}
                 try:
-                    exec(extractor_code, {"__builtins__": {}}, ns)
+                    code_obj = compile(_normalize_extractor_code(extractor_code), "<extractor>", "exec")
+                    exec(code_obj, {"__builtins__": _safe_builtins()}, ns)
                     if "extract_message" in ns and callable(ns["extract_message"]):
                         extracted_preview = ns["extract_message"](first.get("response", {}).get("body", {})) or ""
                 except Exception:
@@ -785,7 +844,7 @@ def ui_eval_router(request: Request, eval_id: str, item_id: str, mode: str | Non
         elif "document" in mt or "doc" in mt:
             base = "/ui/document"
         elif "conversation" in mt or "interview" in mt:
-            base = "/ui/conversation"
+            base = "/ui/interview"
     if not base:
         base = _route_for_mode_access(mode, access)
     # Preserve all params
@@ -883,20 +942,32 @@ def ui_document_post(request: Request,
         how = ev.get('how_to_evaluate')
         pc = ev.get('pass_criteria')
         prompt = (
-            "You are judging a document against a compliance metric.\n" \
-            f"Metric: {metric_name or metric_id}\n" \
-            f"Rubric: {rubric or 'Score quality and completeness.'}\n" \
-            + (f"How to evaluate: {how}\n" if how else "") \
-            + (f"Pass criteria: {pc}\n" if pc else "") \
-            + ("Documents requested: " + "; ".join(docs_req) + "\n" if docs_req else "") \
-            + "\nDocument to judge:\n" + (doc_text or "") +
-            "\n\nReturn ONLY JSON with keys: score (0..1 float), explanation (string), improvement_suggestions (array of short strings)."
+            "You are judging a SINGLE provided document strictly against ONE compliance metric.\n"
+            "Use only the document content; do not assume facts not present.\n"
+            "Cite short quotes from the document to justify the score.\n"
+            "Be concise and actionable.\n"
+            f"Metric: {metric_name or metric_id}\n"
+            f"Rubric: {rubric or 'Score quality and completeness.'}\n"
+            + (f"How to evaluate: {how}\n" if how else "")
+            + (f"Pass criteria: {pc}\n" if pc else "")
+            + ("Documents requested: " + "+ ".join(docs_req) + "\n" if docs_req else "")
+            + "\nDocument to judge (verbatim):\n" + (doc_text or "") +
+            "\n\nReturn ONLY strict JSON with keys: score (0..1 float), explanation (string with short quotes), improvement_suggestions (array of short strings)."
         )
         try:
             txt = client.complete(prompt).strip()
-            data = json.loads(txt)
-            score = float(data.get('score', 0.0))
-            explanation = data.get('explanation', '')
+            try:
+                data = json.loads(txt)
+            except Exception:
+                # best-effort: extract a number and treat text as explanation
+                data = {}
+                import re as _re
+                m = _re.search(r"([01](?:\\.\\d+)?)", txt)
+                if m:
+                    data['score'] = float(m.group(1))
+                    data['explanation'] = txt
+            score = float((data.get('score', 0.0) or 0.0))
+            explanation = (data.get('explanation') or '').strip()
             improvements = data.get('improvement_suggestions') or []
         except Exception:
             score = 0.0
@@ -912,7 +983,10 @@ def ui_document_post(request: Request,
             bits.append(f"Pass criteria: {pc_fb}")
         if how_fb:
             bits.append(f"How to evaluate: {how_fb}")
+        doc_hint = (doc_text[:240] + '…') if doc_text and len(doc_text) > 240 else (doc_text or '')
         explanation = "; ".join(bits) or "Insufficient evidence to assess against criteria."
+        if doc_hint:
+            explanation += f" Document excerpt considered: \"{doc_hint}\"."
         if docs_fb:
             improvements = [f"Provide: {d}" for d in docs_fb]
         if pc_fb:
@@ -929,7 +1003,24 @@ def ui_document_post(request: Request,
     finally:
         db.close()
     _update_evaluation_summary(eval_id)
-    return templates.TemplateResponse("metric_run_result.html", {"request": request, "run_id": run_id, "metric_id": metric_id, "per_conversation": [{"idx": 1, "score": score, "pass": score >= 0.8, "explanation": explanation, "improvements": improvements}], "summary": {"count": 1, "mean": score, "failed_count": 0 if score >= 0.8 else 1}, "eval_id": eval_id})
+    # Persist the submitted document and judge output as an artifact for traceability
+    try:
+        out_dir = os.path.join(ARTIFACTS_DIR, run_id)
+        os.makedirs(out_dir, exist_ok=True)
+        with open(os.path.join(out_dir, "000001.json"), 'w') as f:
+            json.dump({
+                "idx": 1,
+                "request": {"document_text": doc_text, "metric": metric_id},
+                "response": {"judge_raw": (txt if 'txt' in locals() else ''), "score": score, "explanation": explanation, "improvement_suggestions": improvements},
+                "latency_ms": 0,
+                "error_detected": False
+            }, f, indent=2)
+    except Exception:
+        pass
+    # Show a row including a short document excerpt so it’s clear what was judged
+    doc_excerpt = (doc_text[:360] + '…') if doc_text and len(doc_text) > 360 else (doc_text or '')
+    row = {"idx": 1, "score": score, "pass": score >= 0.8, "explanation": explanation, "improvements": improvements, "prompt": f"Document excerpt:\n{doc_excerpt}", "response": ""}
+    return templates.TemplateResponse("metric_run_result.html", {"request": request, "run_id": run_id, "metric_id": metric_id, "per_conversation": [row], "summary": {"count": 1, "mean": score, "failed_count": 0 if score >= 0.8 else 1}, "eval_id": eval_id})
 
 
 @app.get("/ui/conversation", response_class=HTMLResponse)
@@ -1051,6 +1142,168 @@ async def ui_conversation_post(request: Request,
         db.close()
     _update_evaluation_summary(eval_id)
     return templates.TemplateResponse("metric_run_result.html", {"request": request, "run_id": run_id, "metric_id": metric_id, "per_conversation": [{"idx": 1, "score": score, "pass": score >= 0.8, "explanation": explanation, "improvements": improvements}], "summary": {"count": 1, "mean": score, "failed_count": 0 if score >= 0.8 else 1}, "eval_id": eval_id})
+
+
+@app.get("/ui/interview", response_class=HTMLResponse)
+def ui_interview_get(request: Request):
+    eval_id = request.query_params.get('eval_id')
+    item_id = request.query_params.get('item_id')
+    metric_id = request.query_params.get('metric_id')
+    if not (eval_id and item_id and metric_id):
+        raise HTTPException(400, "Missing evaluation context")
+    ev = _get_evaluation(metric_id) or {}
+    questions = [q for q in (ev.get('interview_prompts') or []) if isinstance(q, str)]
+    if not questions:
+        return templates.TemplateResponse("interview.html", {"request": request, "eval_id": eval_id, "item_id": item_id, "metric_id": metric_id, "q_index": 0, "total_q": 0, "question": None, "transcript": [], "turns_left": 0, "done": True, "score": 0.0, "explanation": "No questions in this metric."})
+    # Start with first question
+    q_index = 0
+    question = questions[q_index]
+    transcript = [{"role": "user", "content": question}]
+    turns_left = 3
+    return templates.TemplateResponse("interview.html", {"request": request, "eval_id": eval_id, "item_id": item_id, "metric_id": metric_id, "q_index": q_index, "total_q": len(questions), "question": question, "transcript": transcript, "turns_left": turns_left, "done": False})
+
+
+@app.post("/ui/interview", response_class=HTMLResponse)
+async def ui_interview_post(request: Request,
+                            eval_id: str = Form(...),
+                            item_id: str = Form(...),
+                            metric_id: str = Form(...),
+                            q_index: int = Form(...),
+                            turns_left: int | None = Form(None),
+                            transcript_json: str | None = Form(None),
+                            user_answer: str | None = Form(None),
+                            advance: str | None = Form(None)):
+    import json as _json
+    ev = _get_evaluation(metric_id) or {}
+    questions = [q for q in (ev.get('interview_prompts') or []) if isinstance(q, str)]
+    total_q = len(questions)
+    if q_index < 0 or q_index >= total_q:
+        raise HTTPException(400, "Question index out of range")
+    question = questions[q_index]
+
+    # Load transcript
+    transcript = []
+    if transcript_json:
+        try:
+            transcript = _json.loads(transcript_json)
+        except Exception:
+            transcript = []
+    if not transcript:
+        transcript = [{"role": "user", "content": question}]
+
+    # If we just finished a question and clicked Next
+    if advance:
+        # Move to next question or aggregate if finished
+        if q_index + 1 >= total_q:
+            # Aggregate results from saved transcripts
+            out_dir = os.path.join(ARTIFACTS_DIR, f"interviews_{eval_id}_{metric_id}")
+            per = []
+            try:
+                names = sorted([n for n in os.listdir(out_dir) if n.endswith('.json')])
+                for i, name in enumerate(names, start=1):
+                    try:
+                        data = json.loads(open(os.path.join(out_dir, name)).read())
+                    except Exception:
+                        data = {}
+                    qtext = data.get('question') or ''
+                    tr = data.get('transcript') or []
+                    asst_msgs = [m.get('content','') for m in tr if m.get('role') == 'assistant']
+                    resp_join = asst_msgs[-1] if asst_msgs else ''
+                    sc = float(data.get('score', 0.0) or 0.0)
+                    ex = data.get('explanation') or ''
+                    per.append({"idx": i, "score": sc, "pass": sc >= 0.8, "explanation": ex, "improvements": [], "prompt": qtext, "response": resp_join})
+            except Exception:
+                per = []
+            mean = sum([x['score'] for x in per]) / len(per) if per else 0.0
+            failed = [x for x in per if not x['pass']]
+            summary = {"count": len(per), "mean": mean, "failed_count": len(failed)}
+            # Persist a Run + MetricResult for this interview metric
+            run_id = f"intv-{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}"
+            db = SessionLocal()
+            try:
+                r = Run(run_id=run_id, system_id="", mode="standard", dataset_ref=json.dumps({}), started_at=now_iso(), status="evaluated", evaluation_id=eval_id, overall_score=mean, metric_spec_path=_resolve_metric_path(metric_id))
+                db.add(r)
+                mr = MetricResult(run_id=run_id, metric_code=metric_id, result=json.dumps({"per_conversation": per, "summary": summary}), passed=1 if not failed else 0)
+                db.add(mr)
+                db.commit()
+            finally:
+                db.close()
+            _update_evaluation_summary(eval_id)
+            return templates.TemplateResponse("metric_run_result.html", {"request": request, "run_id": run_id, "metric_id": metric_id, "per_conversation": per, "summary": summary, "eval_id": eval_id})
+        next_q = questions[q_index+1]
+        next_transcript = [{"role": "user", "content": next_q}]
+        return templates.TemplateResponse("interview.html", {"request": request, "eval_id": eval_id, "item_id": item_id, "metric_id": metric_id, "q_index": q_index+1, "total_q": total_q, "question": next_q, "transcript": next_transcript, "turns_left": 3, "done": False})
+
+    # Append user's answer for this step
+    if user_answer is not None:
+        transcript.append({"role": "assistant", "content": user_answer})
+    # Decrement turns_left (defaults to 3 on first entry)
+    turns_left = int(turns_left) if turns_left is not None else 3
+    turns_left = max(0, turns_left - 1)
+
+    # Ask Gemini to decide if done or propose a follow-up
+    try:
+        from .clients.gemini_client import GeminiClient
+        client = GeminiClient()
+    except Exception:
+        client = None
+
+    how = ev.get('how_to_evaluate')
+    pc = ev.get('pass_criteria')
+    rubric = (ev.get('scoring') or {}).get('rubric') or ev.get('rubric')
+    agent_prompt = (
+        "You play the role of an audit interviewer. "
+        "Your goal is to fully cover the interview question with concise follow-ups, within a max number of turns.\n"
+        f"Root question: {question}\n"
+        + (f"Guidance (how to evaluate): {how}\n" if how else "")
+        + (f"Pass criteria: {pc}\n" if pc else "")
+        + (f"Rubric for completeness: {rubric}\n" if rubric else "")
+        + "\nConversation so far (user=interviewer, assistant=respondent):\n"
+        + "\n".join([f"{m['role']}: {m['content']}" for m in transcript])
+        + "\n\nDecide next action and return ONLY JSON. If the responses already fully cover the question, return:\n"
+        + "{\"done\": true, \"score\": 0..1, \"explanation\": \"why the score\"}.\n"
+        + "Otherwise, return: {\"done\": false, \"followup\": \"a short, direct clarifying question\"}.\n"
+    )
+    done = False
+    score = 0.0
+    explanation = ""
+    followup = None
+    if client:
+        try:
+            txt = client.complete(agent_prompt).strip()
+            data = json.loads(txt)
+            done = bool(data.get('done'))
+            if done:
+                score = float(data.get('score', 0.0) or 0.0)
+                explanation = data.get('explanation', '')
+            else:
+                followup = data.get('followup')
+        except Exception:
+            done = False
+
+    # If not done and turns remain, ask follow-up
+    if not done and turns_left > 0 and followup:
+        transcript.append({"role": "user", "content": followup})
+        return templates.TemplateResponse("interview.html", {"request": request, "eval_id": eval_id, "item_id": item_id, "metric_id": metric_id, "q_index": q_index, "total_q": total_q, "question": question, "transcript": transcript, "turns_left": turns_left, "done": False})
+
+    # Otherwise, finish this question: if LLM didn't score, estimate based on length/coverage heuristic
+    if not explanation:
+        # basic heuristic: more tokens implies more coverage
+        total_chars = sum(len(m.get('content','')) for m in transcript if m.get('role') == 'assistant')
+        score = min(1.0, 0.2 + total_chars / 1000.0)
+        explanation = "Heuristic completeness estimate based on detail provided."
+
+    # Save transcript for this question to artifacts
+    out_dir = os.path.join(ARTIFACTS_DIR, f"interviews_{eval_id}_{metric_id}")
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+        with open(os.path.join(out_dir, f"q{q_index+1:02}.json"), 'w') as f:
+            json.dump({"question": question, "transcript": transcript, "score": score, "explanation": explanation}, f, indent=2)
+    except Exception:
+        pass
+
+    # Show result for this question with Next button
+    return templates.TemplateResponse("interview.html", {"request": request, "eval_id": eval_id, "item_id": item_id, "metric_id": metric_id, "q_index": q_index, "total_q": total_q, "question": question, "transcript": transcript, "turns_left": 0, "done": True, "score": score, "explanation": explanation})
 
 
 def _resolve_metric_path(metric_id: str):
@@ -1274,6 +1527,11 @@ def ui_metric_runner_post(request: Request,
         )
         for a in artifacts:
             convo = a.get('conversation') or []
+            # derive prompt/response for display
+            user_msgs = [m.get('content','') for m in convo if (m.get('role') == 'user')]
+            asst_msgs = [m.get('content','') for m in convo if (m.get('role') == 'assistant')]
+            prompt_disp = (user_msgs[-1] if user_msgs else (a.get('request', {}) or {}).get('prompt_value', ''))
+            response_disp = (asst_msgs[-1] if asst_msgs else (a.get('response', {}) or {}).get('message_extracted', ''))
             transcript = "\n".join([f"{m.get('role')}: {m.get('content')}" for m in convo])
             prompt = (
                 ta_intro + "\n" \
@@ -1289,9 +1547,19 @@ def ui_metric_runner_post(request: Request,
             if client:
                 try:
                     txt = client.complete(prompt).strip()
-                    data = json.loads(txt)
-                    val = float(data.get('score', 0.0))
-                    exp = data.get('explanation', '')
+                    try:
+                        data = json.loads(txt)
+                    except Exception:
+                        # best-effort fallback: try to parse a number and capture rest as explanation
+                        data = {}
+                        import re as _re
+                        m = _re.search(r"([01](?:\.\d+)?)", txt)
+                        if m:
+                            data['score'] = float(m.group(1))
+                            # use the remaining text as explanation
+                            data['explanation'] = txt
+                    val = float(data.get('score', 0.0) or 0.0)
+                    exp = (data.get('explanation') or '').strip()
                     imps = data.get('improvement_suggestions') or []
                 except Exception:
                     val = 0.0
@@ -1302,7 +1570,15 @@ def ui_metric_runner_post(request: Request,
                     imps.append("Align responses to the pass criteria above.")
             scores.append(val)
             ok = val >= 0.8
-            per_conv.append({"idx": a.get('idx'), "score": val, "pass": ok, "explanation": exp, "improvements": imps})
+            per_conv.append({
+                "idx": a.get('idx'),
+                "score": val,
+                "pass": ok,
+                "explanation": exp,
+                "improvements": imps,
+                "prompt": prompt_disp,
+                "response": response_disp,
+            })
             if not ok:
                 failed.append(a.get('idx'))
         mean = sum(scores)/len(scores) if scores else 0.0
@@ -1455,12 +1731,13 @@ def ui_save_extractor(request: Request,
                       eval_id: str | None = Form(None),
                       item_id: str | None = Form(None),
                       metric_id: str | None = Form(None)):
+    logging.getLogger("testing_agent").info("[save_extractor] system_id=%s run_id=%s len(code)=%s", system_id, run_id, len(extractor_code or ""))
     # Save extractor on latest mapping for system
     db = SessionLocal()
     try:
         mapping_latest = db.query(Mapping).filter_by(system_id=system_id).order_by(Mapping.id.desc()).first()
         if mapping_latest:
-            mapping_latest.message_extractor = extractor_code
+            mapping_latest.message_extractor = _normalize_extractor_code(extractor_code)
             db.commit()
     finally:
         db.close()
@@ -1472,7 +1749,8 @@ def ui_save_extractor(request: Request,
         first = artifacts[0]
         ns = {}
         try:
-            exec(extractor_code, {"__builtins__": {}}, ns)
+            code_obj = compile(_normalize_extractor_code(extractor_code), "<extractor>", "exec")
+            exec(code_obj, {"__builtins__": _safe_builtins()}, ns)
             if "extract_message" in ns and callable(ns["extract_message"]):
                 extracted_preview = ns["extract_message"](first.get("response", {}).get("body", {})) or ""
         except Exception:
@@ -1514,11 +1792,109 @@ def ui_apply_extractor(request: Request,
         first = artifacts[0]
         ns = {}
         try:
-            exec(extractor_code, {"__builtins__": {}}, ns)
+            code_obj = compile(_normalize_extractor_code(extractor_code), "<extractor>", "exec")
+            exec(code_obj, {"__builtins__": _safe_builtins()}, ns)
             if "extract_message" in ns and callable(ns["extract_message"]):
                 extracted_preview = ns["extract_message"](first.get("response", {}).get("body", {})) or ""
         except Exception:
             extracted_preview = ""
+
+@app.post("/ui/apply_extractor_json")
+def ui_apply_extractor_json(system_id: str = Form(...),
+                            run_id: str = Form(...),
+                            extractor_code: str = Form(...)):
+    # Return just the extracted message (and optional error) as JSON, no page reload
+    from .evaluator import load_artifacts
+    logger = logging.getLogger("testing_agent")
+    artifacts = load_artifacts(run_id)
+    logger.info("[apply_extractor_json] run_id=%s system_id=%s", run_id, system_id)
+    if not artifacts:
+        logger.warning("[apply_extractor_json] no artifacts found for run_id=%s", run_id)
+        return JSONResponse({"ok": False, "error": "No artifacts to preview."}, headers={"Cache-Control": "no-store"})
+    first = artifacts[0]
+    resp_body = first.get("response", {}).get("body", {})
+    try:
+        # pretty but truncated for logs
+        body_preview = json.dumps(resp_body)[:1000]
+    except Exception:
+        body_preview = str(type(resp_body))
+    logger.info("[apply_extractor_json] resp_body preview: %s", body_preview)
+    code_norm = _normalize_extractor_code(extractor_code or "")
+    logger.info("[apply_extractor_json] extractor_code (len=%s):\n%s", len(code_norm), code_norm[:2000])
+    ns = {}
+    try:
+        # Compile first to surface syntax errors with line/offset
+        code_obj = compile(code_norm, "<extractor>", "exec")
+        exec(code_obj, {"__builtins__": _safe_builtins()}, ns)
+        if "extract_message" in ns and callable(ns["extract_message"]):
+            out = ns["extract_message"](resp_body)
+            if out is None:
+                out = ""
+            logger.info("[apply_extractor_json] extractor output: %r", (out[:500] if isinstance(out, str) else out))
+            # Persist a debug bundle
+            try:
+                os.makedirs(EXTRACTOR_TESTS_DIR, exist_ok=True)
+                bundle = {
+                    "ts": int(time.time()),
+                    "run_id": run_id,
+                    "system_id": system_id,
+                    "response": first.get("response", {}),
+                    "extractor_code": code_norm,
+                    "extracted_message": out,
+                }
+                name = f"{run_id}_{int(time.time()*1000)}.json"
+                with open(os.path.join(EXTRACTOR_TESTS_DIR, name), 'w') as f:
+                    json.dump(bundle, f, indent=2)
+            except Exception:
+                logger.exception("[apply_extractor_json] failed writing debug bundle")
+            return JSONResponse({"ok": True, "extracted_message": out}, headers={"Cache-Control": "no-store"})
+        logger.error("[apply_extractor_json] extract_message not defined/callable")
+        return JSONResponse({"ok": False, "error": "Function 'extract_message' not defined.", "debug": {"code_head": code_norm[:200]}}, headers={"Cache-Control": "no-store"})
+    except SyntaxError as e:
+        msg = f"SyntaxError: {e.msg} (line {e.lineno}, offset {e.offset})"
+        logger.error("[apply_extractor_json] %s", msg)
+        logger.info("[apply_extractor_json] extractor_code was:\n%s", code_norm)
+        logger.info("[apply_extractor_json] resp_body was: %s", body_preview)
+        # Persist failing bundle
+        try:
+            os.makedirs(EXTRACTOR_TESTS_DIR, exist_ok=True)
+            bundle = {
+                "ts": int(time.time()),
+                "run_id": run_id,
+                "system_id": system_id,
+                "response": first.get("response", {}),
+                "extractor_code": code_norm,
+                "error": msg,
+            }
+            name = f"{run_id}_{int(time.time()*1000)}_syntax_error.json"
+            with open(os.path.join(EXTRACTOR_TESTS_DIR, name), 'w') as f:
+                json.dump(bundle, f, indent=2)
+        except Exception:
+            logger.exception("[apply_extractor_json] failed writing syntax error bundle")
+        return JSONResponse({"ok": False, "error": msg, "debug": {"code_head": code_norm[:200], "lineno": e.lineno, "offset": e.offset}}, headers={"Cache-Control": "no-store"})
+    except Exception as e:
+        logger.error("[apply_extractor_json] extractor raised: %s", e)
+        logger.info("[apply_extractor_json] extractor_code was:\n%s", code_norm)
+        logger.info("[apply_extractor_json] resp_body was: %s", body_preview)
+        logger.debug("[apply_extractor_json] traceback:\n%s", traceback.format_exc())
+        # Persist failing bundle
+        try:
+            os.makedirs(EXTRACTOR_TESTS_DIR, exist_ok=True)
+            bundle = {
+                "ts": int(time.time()),
+                "run_id": run_id,
+                "system_id": system_id,
+                "response": first.get("response", {}),
+                "extractor_code": code_norm,
+                "error": str(e),
+                "traceback": traceback.format_exc(),
+            }
+            name = f"{run_id}_{int(time.time()*1000)}_error.json"
+            with open(os.path.join(EXTRACTOR_TESTS_DIR, name), 'w') as f:
+                json.dump(bundle, f, indent=2)
+        except Exception:
+            logger.exception("[apply_extractor_json] failed writing error bundle")
+        return JSONResponse({"ok": False, "error": f"Extractor error: {e}", "debug": {"code_head": code_norm[:200]}}, headers={"Cache-Control": "no-store"})
     return templates.TemplateResponse("new_eval_result.html", {
         "request": request,
         "system_id": system_id,
